@@ -1,0 +1,159 @@
+"""
+文件传输模块
+
+核心功能：
+1. 从内网 Seafile 下载文件（使用 Seafile REST API）
+2. 上传到外网 Seafile（使用 Seafile REST API / seafile-python-sdk）
+
+Seafile API 文档：https://download.seafile.com/published/seafile-user-manual/develop/web_api_v2.1.md
+"""
+import io
+import os
+import tempfile
+from typing import Tuple
+
+import httpx
+
+from .config import get_settings
+from .models import ReviewTask
+
+
+class SeafileClient:
+    """Seafile REST API 客户端封装"""
+
+    def __init__(self, base_url: str, token: str):
+        self.base_url = base_url.rstrip("/")
+        self.headers = {"Authorization": f"Token {token}"}
+
+    async def get_download_link(self, repo_id: str, file_path: str) -> str:
+        """获取文件下载链接"""
+        url = f"{self.base_url}/api2/repos/{repo_id}/file/"
+        params = {"p": file_path}
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(url, params=params, headers=self.headers)
+            resp.raise_for_status()
+            # 返回的是带引号的 URL 字符串
+            return resp.text.strip('"')
+
+    async def download_file(self, repo_id: str, file_path: str) -> bytes:
+        """下载文件内容到内存"""
+        dl_url = await self.get_download_link(repo_id, file_path)
+        async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
+            resp = await client.get(dl_url, headers=self.headers)
+            resp.raise_for_status()
+            return resp.content
+
+    async def get_upload_link(self, repo_id: str, target_dir: str = "/") -> str:
+        """获取文件上传链接"""
+        url = f"{self.base_url}/api2/repos/{repo_id}/upload-link/"
+        params = {"p": target_dir}
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(url, params=params, headers=self.headers)
+            resp.raise_for_status()
+            return resp.text.strip('"')
+
+    async def upload_file(
+        self,
+        repo_id: str,
+        file_name: str,
+        file_content: bytes,
+        target_dir: str = "/",
+    ) -> str:
+        """
+        上传文件到指定目录
+
+        Returns:
+            str: 上传后的文件路径
+        """
+        upload_url = await self.get_upload_link(repo_id, target_dir)
+
+        async with httpx.AsyncClient(timeout=300) as client:
+            files = {
+                "file": (file_name, io.BytesIO(file_content), "application/octet-stream"),
+                "filename": (None, file_name),
+                "parent_dir": (None, target_dir),
+            }
+            resp = await client.post(upload_url, files=files, headers=self.headers)
+            resp.raise_for_status()
+
+        return f"{target_dir.rstrip('/')}/{file_name}"
+
+    async def ensure_dir(self, repo_id: str, dir_path: str):
+        """确保目录存在，不存在则创建（递归）"""
+        if dir_path == "/" or not dir_path:
+            return
+        url = f"{self.base_url}/api2/repos/{repo_id}/dir/"
+        params = {"p": dir_path}
+        async with httpx.AsyncClient(timeout=30) as client:
+            # 先检查是否存在
+            resp = await client.get(url, params=params, headers=self.headers)
+            if resp.status_code == 200:
+                return
+            # 不存在则创建
+            data = {"operation": "mkdir"}
+            resp = await client.post(url, params=params, data=data, headers=self.headers)
+            if resp.status_code not in (200, 201):
+                # 父目录可能不存在，递归创建
+                parent = "/".join(dir_path.rstrip("/").split("/")[:-1]) or "/"
+                await self.ensure_dir(repo_id, parent)
+                resp = await client.post(url, params=params, data=data, headers=self.headers)
+                resp.raise_for_status()
+
+
+async def transfer_file_to_extranet(
+    task: ReviewTask,
+) -> Tuple[bool, str, str]:
+    """
+    将内网文件传输到外网 Seafile
+
+    Args:
+        task: 审核任务对象
+
+    Returns:
+        Tuple[bool, str, str]: (成功标志, 错误信息, 外网文件路径)
+    """
+    settings = get_settings()
+
+    # 初始化内外网客户端
+    intranet_client = SeafileClient(
+        settings.intranet_seafile_url,
+        settings.intranet_seafile_token,
+    )
+    extranet_client = SeafileClient(
+        settings.extranet_seafile_url,
+        settings.extranet_seafile_token,
+    )
+
+    try:
+        print(f"[Transfer] Downloading {task.file_path} from intranet repo {task.repo_id}...")
+        file_content = await intranet_client.download_file(task.repo_id, task.file_path)
+        print(f"[Transfer] Downloaded {len(file_content)} bytes")
+
+        # 保持原始目录结构
+        target_dir = os.path.dirname(task.file_path) or "/"
+        if not target_dir.startswith("/"):
+            target_dir = "/" + target_dir
+
+        # 确保目标目录存在
+        await extranet_client.ensure_dir(settings.extranet_repo_id, target_dir)
+
+        print(f"[Transfer] Uploading to extranet repo {settings.extranet_repo_id}, dir={target_dir}...")
+        extranet_path = await extranet_client.upload_file(
+            settings.extranet_repo_id,
+            task.file_name,
+            file_content,
+            target_dir=target_dir,
+        )
+        print(f"[Transfer] Upload success: {extranet_path}")
+
+        return True, "", extranet_path
+
+    except httpx.HTTPStatusError as e:
+        error_msg = f"HTTP Error {e.response.status_code}: {e.response.text[:200]}"
+        print(f"[Transfer] Failed: {error_msg}")
+        return False, error_msg, ""
+
+    except Exception as e:
+        error_msg = str(e)
+        print(f"[Transfer] Failed: {error_msg}")
+        return False, error_msg, ""
