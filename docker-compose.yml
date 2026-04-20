@@ -6,12 +6,31 @@ services:
     container_name: seafile-mft
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "8081:8080"
     volumes:
       - ./seafile_mft.db:/app/seafile_mft.db
-      - ./.env:/app/.env:ro
+      # 不再挂载 .env 文件，改用 environment 传递关键配置
     environment:
       - TZ=Asia/Shanghai
+      # 从 .env 文件读取并传递（需要在启动前设置这些环境变量）
+      - INTRANET_SEAFILE_URL=${INTRANET_SEAFILE_URL:-http://192.168.101.111}
+      - INTRANET_SEAFILE_TOKEN=${INTRANET_SEAFILE_TOKEN:-}
+      - INTRANET_REPO_ID=${INTRANET_REPO_ID:-eb8d70e1-736c-4548-b1bc-01d129071a11}
+      - EXTRANET_SEAFILE_URL=${EXTRANET_SEAFILE_URL:-https://seafile.example.com}
+      - EXTRANET_SEAFILE_TOKEN=${EXTRANET_SEAFILE_TOKEN:-}
+      - EXTRANET_REPO_ID=${EXTRANET_REPO_ID:-}
+      - SMTP_HOST=${SMTP_HOST:-smtp.example.com}
+      - SMTP_PORT=${SMTP_PORT:-465}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_USE_SSL=${SMTP_USE_SSL:-true}
+      - REVIEWER_EMAILS=${REVIEWER_EMAILS:-}
+      - APP_BASE_URL=${APP_BASE_URL:-http://localhost:8081}
+      - SECRET_KEY=${SECRET_KEY:-change-me}
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///./seafile_mft.db}
+      - REVIEW_TOKEN_EXPIRE_HOURS=${REVIEW_TOKEN_EXPIRE_HOURS:-72}
+      - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-60}
+      - POLL_ON_STARTUP=${POLL_ON_STARTUP:-true}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s

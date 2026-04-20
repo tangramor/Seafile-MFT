@@ -28,9 +28,12 @@ class Settings(BaseSettings):
     # 应用
     app_base_url: str = "http://localhost:8080"
     secret_key: str = "change-me"
-    database_url: str = "sqlite+aiosqlite:///./seafile_mft.db"
-    webhook_secret: str = ""
+    database_url: str = "sqlite:///./seafile_mft.db"  # 同步 SQLite
     review_token_expire_hours: int = 72
+
+    # 轮询配置（替代 Webhook，适配 Seafile 6.x）
+    poll_interval_seconds: int = 60   # 轮询间隔（秒），建议 30~300
+    poll_on_startup: bool = True       # 启动时立即执行一次轮询
 
     class Config:
         env_file = ".env"

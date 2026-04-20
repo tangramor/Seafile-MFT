@@ -1,19 +1,19 @@
 """
-数据库模型定义
+数据库模型定义 - 使用同步 SQLAlchemy 避免 aiosqlite 线程问题
 """
-from sqlalchemy import Column, String, Integer, DateTime, Text, Enum
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy import Column, String, Integer, DateTime, Text, Enum, create_engine
+from sqlalchemy.orm import DeclarativeBase, sessionmaker, Session
 from datetime import datetime
+from contextlib import contextmanager
 import enum
 
 
 class ReviewStatus(str, enum.Enum):
-    PENDING = "pending"       # 等待审批
-    APPROVED = "approved"     # 已通过
-    REJECTED = "rejected"     # 已拒绝
-    TRANSFERRED = "transferred"  # 已传输到外网
-    FAILED = "failed"         # 传输失败
+    PENDING = "pending"           # 等待审批
+    APPROVED = "approved"         # 已通过
+    REJECTED = "rejected"         # 已拒绝
+    TRANSFERRED = "transferred"   # 已传输到外网
+    FAILED = "failed"             # 传输失败
 
 
 class Base(DeclarativeBase):
@@ -55,24 +55,57 @@ class ReviewTask(Base):
     expire_at = Column(DateTime, nullable=True)   # token 过期时间
 
 
+class PollerState(Base):
+    """
+    轮询进度表 - 记录每个 repo 最后处理到的 commit_id
+    用于跨重启持久化轮询位置，避免重复触发审核
+    """
+    __tablename__ = "poller_state"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    repo_id = Column(String(64), unique=True, index=True, nullable=False)
+    last_commit_id = Column(String(64), nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 # ==============================
-# 数据库引擎和 Session 工厂
+# 数据库引擎和 Session 工厂（同步模式）
 # ==============================
 _engine = None
-_async_session = None
+_session_factory = None
 
 
 def init_engine(database_url: str):
-    global _engine, _async_session
-    _engine = create_async_engine(database_url, echo=False)
-    _async_session = sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
+    """初始化数据库引擎（同步模式）"""
+    global _engine, _session_factory
+    # 移除 aiosqlite 前缀，使用普通 sqlite
+    if database_url.startswith("sqlite+aiosqlite"):
+        database_url = database_url.replace("sqlite+aiosqlite", "sqlite")
+    _engine = create_engine(database_url, echo=False, connect_args={"check_same_thread": False})
+    _session_factory = sessionmaker(_engine, expire_on_commit=False)
 
 
-async def create_tables():
-    async with _engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+def create_tables():
+    """创建所有表（同步），忽略已存在的表"""
+    Base.metadata.create_all(bind=_engine, checkfirst=True)
 
 
-async def get_db() -> AsyncSession:
-    async with _async_session() as session:
-        yield session
+@contextmanager
+def get_db() -> Session:
+    """获取数据库会话（同步上下文管理器）"""
+    db = _session_factory()
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+# 为 FastAPI Depends 提供的异步包装（实际使用同步数据库）
+async def get_db_async():
+    """FastAPI 依赖注入用的异步包装"""
+    with get_db() as db:
+        yield db
