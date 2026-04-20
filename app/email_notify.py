@@ -1,11 +1,13 @@
 """
 邮件通知模块
 
-发送审批通知邮件给审批人员，包含：
-- 文件名、上传者、上传时间
-- 一键审批通过 / 拒绝链接
+支持双网络（内网/外网）SMTP 配置：
+- 内网 SMTP 发送的邮件中，审批链接指向内网 App URL
+- 外网 SMTP 发送的邮件中，审批链接指向外网 App URL
+- 若只配置了内网 SMTP，则回退到单路发送
 """
 import ssl
+import logging
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -14,12 +16,22 @@ from datetime import datetime
 from .config import get_settings
 from .models import ReviewTask
 
+logger = logging.getLogger(__name__)
 
-def build_review_email(task: ReviewTask, reviewer_email: str) -> MIMEMultipart:
+
+def build_review_email(task: ReviewTask, reviewer_email: str, app_url: str) -> MIMEMultipart:
+    """
+    构造审批通知邮件。
+
+    :param task:           审核任务对象
+    :param reviewer_email: 收件人邮箱
+    :param app_url:        本次邮件使用的 App 访问地址（内网或外网）
+    """
     settings = get_settings()
-    approve_url = f"{settings.app_base_url}/review/{task.token}?action=approve"
-    reject_url = f"{settings.app_base_url}/review/{task.token}?action=reject"
-    detail_url = f"{settings.app_base_url}/review/{task.token}"
+    base = app_url.rstrip("/")
+    approve_url = f"{base}/review/{task.token}?action=approve"
+    reject_url  = f"{base}/review/{task.token}?action=reject"
+    detail_url  = f"{base}/review/{task.token}"
 
     subject = f"【文件审批】{task.file_name} 待审核"
 
@@ -112,54 +124,88 @@ def build_review_email(task: ReviewTask, reviewer_email: str) -> MIMEMultipart:
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = settings.smtp_user
+    msg["From"] = settings.smtp_user if not settings.intranet_smtp_user else settings.intranet_smtp_user
     msg["To"] = reviewer_email
     msg.attach(MIMEText(html_body, "html", "utf-8"))
     return msg
 
 
+def _send_via_smtp(smtp_cfg: dict, task: ReviewTask, reviewer_emails: list):
+    """
+    使用单个 SMTP 配置向所有审批人发送邮件。
+
+    :param smtp_cfg:        来自 settings.active_smtp_configs 的单项配置字典
+    :param task:            审核任务对象
+    :param reviewer_emails: 收件人列表
+    """
+    host      = smtp_cfg["host"]
+    port      = smtp_cfg["port"]
+    user      = smtp_cfg["user"]
+    password  = smtp_cfg["password"]
+    use_ssl   = smtp_cfg["use_ssl"]
+    app_url   = smtp_cfg["app_url"]
+    label     = smtp_cfg["label"]
+
+    try:
+        if use_ssl:
+            ctx = ssl.create_default_context()
+            server_cls = smtplib.SMTP_SSL(host, port, context=ctx)
+        else:
+            server_cls = smtplib.SMTP(host, port)
+
+        with server_cls as server:
+            if not use_ssl:
+                server.starttls()
+            server.login(user, password)
+            for reviewer in reviewer_emails:
+                msg = build_review_email(task, reviewer, app_url)
+                msg["From"] = user  # 覆盖 From 为实际发件账号
+                server.sendmail(user, reviewer, msg.as_string())
+                logger.info(f"[Email] [{label}] 已发送审批通知 -> {reviewer}（task #{task.id}，链接: {app_url}）")
+    except Exception as e:
+        logger.error(f"[Email] [{label}] 发送失败（task #{task.id}）: {e}")
+
+
 async def send_review_notification(task: ReviewTask):
-    """异步发送审批通知邮件给所有审批人"""
+    """
+    异步发送审批通知邮件。
+    若配置了双 SMTP，则分别通过内网和外网 SMTP 各发一封，链接对应各自网络地址。
+    若只配置了单 SMTP，则只发一封（向下兼容）。
+    """
     settings = get_settings()
     if not settings.reviewer_email_list:
-        print("[Email] No reviewer emails configured, skipping notification.")
+        logger.warning("[Email] 未配置审批人邮箱，跳过通知发送")
+        return
+
+    smtp_configs = settings.active_smtp_configs
+    if not smtp_configs:
+        logger.warning("[Email] 未找到任何有效的 SMTP 配置，跳过通知发送")
         return
 
     import asyncio
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, _send_emails_sync, task, settings)
+
+    for cfg in smtp_configs:
+        await loop.run_in_executor(
+            None, _send_via_smtp, cfg, task, settings.reviewer_email_list
+        )
 
 
-def _send_emails_sync(task: ReviewTask, settings):
-    """同步发送邮件（在线程池中执行）"""
-    try:
-        if settings.smtp_use_ssl:
-            context = ssl.create_default_context()
-            with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, context=context) as server:
-                server.login(settings.smtp_user, settings.smtp_password)
-                for reviewer in settings.reviewer_email_list:
-                    msg = build_review_email(task, reviewer)
-                    server.sendmail(settings.smtp_user, reviewer, msg.as_string())
-                    print(f"[Email] Sent review notification to {reviewer} for task #{task.id}")
-        else:
-            with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as server:
-                server.starttls()
-                server.login(settings.smtp_user, settings.smtp_password)
-                for reviewer in settings.reviewer_email_list:
-                    msg = build_review_email(task, reviewer)
-                    server.sendmail(settings.smtp_user, reviewer, msg.as_string())
-                    print(f"[Email] Sent review notification to {reviewer} for task #{task.id}")
-    except Exception as e:
-        print(f"[Email] Failed to send email for task #{task.id}: {e}")
-
+# ─────────────────────────────────────────────
+# 审批结果通知（发送给上传者）
+# ─────────────────────────────────────────────
 
 async def send_result_notification(task: ReviewTask):
-    """发送审批结果通知给上传者"""
+    """发送审批结果通知给上传者（使用内网 SMTP 或回退到旧 SMTP）"""
     if not task.uploader_email:
         return
     settings = get_settings()
 
-    status_text = "已通过并同步至外网" if task.status.value == "transferred" else f"已被拒绝：{task.reviewer_comment}"
+    status_text = (
+        "已通过并同步至外网"
+        if task.status.value == "transferred"
+        else f"已被拒绝：{task.reviewer_comment}"
+    )
     subject = f"【文件审批结果】{task.file_name} - {status_text}"
 
     html_body = f"""
@@ -172,9 +218,18 @@ async def send_result_notification(task: ReviewTask):
 {"<p><b>外网路径：</b>" + task.extranet_file_path + "</p>" if task.extranet_file_path else ""}
 </body></html>
 """
+    # 结果通知只用内网 SMTP（或回退的单 SMTP）发送一次
+    smtp_configs = settings.active_smtp_configs
+    if not smtp_configs:
+        logger.warning("[Email] 未找到任何有效的 SMTP 配置，跳过结果通知")
+        return
+
+    # 取第一个（内网优先）
+    cfg = smtp_configs[0]
+
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = settings.smtp_user
+    msg["From"] = cfg["user"]
     msg["To"] = task.uploader_email
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 
@@ -183,17 +238,18 @@ async def send_result_notification(task: ReviewTask):
 
     def _send():
         try:
-            if settings.smtp_use_ssl:
-                context = ssl.create_default_context()
-                with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, context=context) as s:
-                    s.login(settings.smtp_user, settings.smtp_password)
-                    s.sendmail(settings.smtp_user, task.uploader_email, msg.as_string())
+            if cfg["use_ssl"]:
+                ctx = ssl.create_default_context()
+                with smtplib.SMTP_SSL(cfg["host"], cfg["port"], context=ctx) as s:
+                    s.login(cfg["user"], cfg["password"])
+                    s.sendmail(cfg["user"], task.uploader_email, msg.as_string())
             else:
-                with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as s:
+                with smtplib.SMTP(cfg["host"], cfg["port"]) as s:
                     s.starttls()
-                    s.login(settings.smtp_user, settings.smtp_password)
-                    s.sendmail(settings.smtp_user, task.uploader_email, msg.as_string())
+                    s.login(cfg["user"], cfg["password"])
+                    s.sendmail(cfg["user"], task.uploader_email, msg.as_string())
+            logger.info(f"[Email] 审批结果通知已发送 -> {task.uploader_email}")
         except Exception as e:
-            print(f"[Email] Failed to send result notification: {e}")
+            logger.error(f"[Email] 发送审批结果通知失败: {e}")
 
     await loop.run_in_executor(None, _send)

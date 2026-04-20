@@ -6,15 +6,18 @@ Seafile 活动轮询模块（适配 Seafile 6.x 及以上版本）
 轮询策略：
 - 每隔 POLL_INTERVAL_SECONDS 秒执行一次
 - 使用 PollerState 表持久化"上次已处理的 commit_id"，避免重启后重复处理
-- 只处理 added / modified 文件，忽略 deleted
 
-Seafile 6.x API 使用：
-  GET /api2/repos/{repo_id}/history/?page=1&per_page=25
-  返回按时间倒序的 commit 列表，每条 commit 含 id、ctime、creator_name、desc
-  
-  获取 commit 中的文件变更：
-  GET /api2/repos/{repo_id}/commits/{commit_id}/
-  返回 { "commit_info": {...}, "commit_diffs": [...] }
+Seafile 6.x API（已确认可用）：
+  GET /api2/repos/{repo_id}/history/          - 获取 commit 列表（时间倒序）
+  GET /api2/repos/{repo_id}/dir/?p={path}     - 获取目录内容（当前版本）
+  GET /api2/repos/{repo_id}/file/detail/?p={path} - 获取文件详情（含 last_modified、id）
+
+轮询逻辑（绕开不可用的 commit diff API）：
+  1. 拉取最新 commit 列表，找到比 last_commit_id 更新的提交
+  2. 获取新 commit 的提交时间（ctime）
+  3. 遍历仓库中所有文件，找出 last_modified >= last_ctime 的文件
+  4. 为每个新增/修改文件创建审核任务
+  5. 更新 last_commit_id
 """
 
 import asyncio
@@ -44,11 +47,12 @@ class SeafilePoller:
         self.base_url = base_url.rstrip("/")
         self.headers = {"Authorization": f"Token {token}"}
 
-    async def list_commits(self, repo_id: str, page: int = 1, per_page: int = 25) -> List[dict]:
+    async def list_commits(self, repo_id: str, page: int = 1, per_page: int = 50) -> List[dict]:
         """
         获取 repo 的 commit 列表（时间倒序）
-        Seafile 6.x 使用 /history/ 端点
-        GET /api2/repos/{repo_id}/history/
+        Seafile 6.x: GET /api2/repos/{repo_id}/history/
+        返回: {"commits": [...]} 或直接列表
+        每个 commit 包含: id, ctime, creator_name, creator, desc
         """
         url = f"{self.base_url}/api2/repos/{repo_id}/history/"
         params = {"page": page, "per_page": per_page}
@@ -56,75 +60,65 @@ class SeafilePoller:
             resp = await client.get(url, params=params, headers=self.headers)
             resp.raise_for_status()
             data = resp.json()
-            # 调试：打印第一个 commit 的结构
-            if data and isinstance(data, list) and len(data) > 0:
-                logger.debug(f"[Poller] Commit 数据结构示例: {data[0]}")
-            elif data and isinstance(data, dict) and data.get("commits"):
-                logger.debug(f"[Poller] Commit 数据结构示例: {data['commits'][0]}")
-            # 兼容返回格式：可能是列表，也可能是 {"commits": [...]}
             if isinstance(data, list):
                 return data
             return data.get("commits", [])
 
-    async def get_commit_dir(self, repo_id: str, commit_id: str, path: str = "/") -> List[dict]:
+    async def list_dir(self, repo_id: str, path: str = "/") -> List[dict]:
         """
-        获取指定 commit/snapshot 中的目录内容
-        尝试多种 Seafile 版本的 API 路径
+        列出目录内容（当前最新版本）
+        GET /api2/repos/{repo_id}/dir/?p={path}
+        返回文件/目录条目列表，每条包含:
+          - name: 文件/目录名
+          - type: "file" | "dir"
+          - size: 文件大小（bytes）
+          - id: 对象 ID
+          - mtime: 最后修改时间（Unix 时间戳）
         """
-        # 尝试多种可能的路径
-        paths_to_try = [
-            (f"{self.base_url}/api/v2.1/repos/{repo_id}/commits/{commit_id}/dir/", {"path": path}),
-            (f"{self.base_url}/api2/repos/{repo_id}/commits/{commit_id}/dir/", {"p": path}),
-            (f"{self.base_url}/api2/repos/{repo_id}/commit/{commit_id}/dir/", {"p": path}),
-        ]
-        
-        last_error = None
-        for url, params in paths_to_try:
-            try:
-                async with httpx.AsyncClient(timeout=20, verify=False) as client:
-                    resp = await client.get(url, params=params, headers=self.headers)
-                    resp.raise_for_status()
-                    data = resp.json()
-                    logger.info(f"[Poller] 成功获取目录列表，使用路径: {url}")
-                    # 可能是列表或 {"dirents": [...]}
-                    if isinstance(data, list):
-                        return data
-                    return data.get("dirents", [])
-            except Exception as e:
-                last_error = e
-                logger.debug(f"[Poller] 目录列表路径失败 {url}: {e}")
-                continue
-        
-        raise last_error
+        url = f"{self.base_url}/api2/repos/{repo_id}/dir/"
+        params = {"p": path}
+        async with httpx.AsyncClient(timeout=20, verify=False) as client:
+            resp = await client.get(url, params=params, headers=self.headers)
+            resp.raise_for_status()
+            data = resp.json()
+            if isinstance(data, list):
+                return data
+            return data.get("dirents", [])
 
-    async def get_commit_diff(self, repo_id: str, commit_id: str) -> dict:
+    async def list_all_files(self, repo_id: str, path: str = "/") -> List[dict]:
         """
-        获取指定 commit 的文件变更详情
-        尝试多种 Seafile 版本的路径格式
+        递归列出仓库中所有文件（深度优先遍历目录树）
+        返回: [{"path": "/dir/file.txt", "name": "file.txt", "mtime": ..., "size": ...}, ...]
         """
-        # 尝试多种可能的路径
-        paths_to_try = [
-            f"{self.base_url}/api2/repos/{repo_id}/commit/{commit_id}/",
-            f"{self.base_url}/api2/repos/{repo_id}/commits/{commit_id}/",
-            f"{self.base_url}/api2/repos/{repo_id}/history/{commit_id}/",
-        ]
-        
-        last_error = None
-        for url in paths_to_try:
-            try:
-                async with httpx.AsyncClient(timeout=20, verify=False) as client:
-                    resp = await client.get(url, headers=self.headers)
-                    resp.raise_for_status()
-                    data = resp.json()
-                    logger.info(f"[Poller] 成功获取 commit diff，使用路径: {url}")
-                    return data
-            except Exception as e:
-                last_error = e
-                logger.debug(f"[Poller] 路径失败 {url}: {e}")
+        all_files = []
+        try:
+            entries = await self.list_dir(repo_id, path)
+        except Exception as e:
+            logger.warning(f"[Poller] 列出目录 {path} 失败: {e}")
+            return all_files
+
+        for entry in entries:
+            entry_name = entry.get("name", "")
+            if not entry_name:
                 continue
-        
-        # 所有路径都失败，抛出最后一个错误
-        raise last_error
+
+            entry_path = f"{path.rstrip('/')}/{entry_name}"
+            entry_type = entry.get("type", "")
+
+            if entry_type == "file":
+                all_files.append({
+                    "path": entry_path,
+                    "name": entry_name,
+                    "mtime": entry.get("mtime", 0),
+                    "size": entry.get("size", 0),
+                    "id": entry.get("id", ""),
+                })
+            elif entry_type == "dir":
+                # 递归遍历子目录
+                sub_files = await self.list_all_files(repo_id, entry_path)
+                all_files.extend(sub_files)
+
+        return all_files
 
 
 # ─────────────────────────────────────────────
@@ -134,11 +128,11 @@ class SeafilePoller:
 async def poll_once():
     """
     执行一次轮询：
-    1. 从数据库读取上次处理的 commit_id
-    2. 获取 Seafile 最新 commits
-    3. 找出所有尚未处理的新 commit
-    4. 遍历每个新 commit，获取文件变更，创建审核任务
-    5. 更新数据库中的 last_seen_commit_id
+    1. 从数据库读取上次处理的 commit_id 和 ctime
+    2. 获取 Seafile 最新 commits，找出新 commit
+    3. 遍历仓库所有文件，找出 mtime >= last_ctime 的文件
+    4. 为每个新增/修改文件创建审核任务
+    5. 更新数据库中的 last_commit_id
     """
     settings = get_settings()
     poller = SeafilePoller(settings.intranet_seafile_url, settings.intranet_seafile_token)
@@ -148,18 +142,16 @@ async def poll_once():
         last_commit_id = _get_last_commit_id(db, settings.intranet_repo_id)
 
         try:
-            # 2. 拉取最新 commits（最多取 50 条，防止首次运行漏单）
-            commits = await poller.list_commits(settings.intranet_repo_id, per_page=50)
+            # 2. 拉取最新 commits
+            commits = await poller.list_commits(settings.intranet_repo_id)
         except Exception as e:
             logger.error(f"[Poller] 拉取 commits 失败: {type(e).__name__}: {e}")
-            import traceback
-            logger.error(f"[Poller] 错误详情: {traceback.format_exc()}")
             return
 
         if not commits:
             return
 
-        # 首次运行：记录当前最新 commit，不产生审核任务（避免历史文件全部触发）
+        # 首次运行：记录当前最新 commit，不产生审核任务
         if last_commit_id is None:
             newest_id = commits[0]["id"]
             _save_last_commit_id(db, settings.intranet_repo_id, newest_id)
@@ -167,7 +159,7 @@ async def poll_once():
             logger.info(f"[Poller] 首次运行，记录起始 commit: {newest_id[:8]}，后续新上传文件将触发审核")
             return
 
-        # 3. 找出 last_commit_id 之后（更新）的所有 commit（列表是倒序的）
+        # 3. 找出 last_commit_id 之后的新 commit（列表是倒序的）
         new_commits = []
         for c in commits:
             if c["id"] == last_commit_id:
@@ -179,114 +171,98 @@ async def poll_once():
 
         logger.info(f"[Poller] 发现 {len(new_commits)} 个新 commit，开始处理...")
 
-        # 4. 从旧到新处理（翻转，保证时序）
-        new_commits.reverse()
+        # 4. 计算需要检查的时间范围
+        # new_commits 是倒序的，最旧的新 commit 时间作为下限
+        oldest_new_commit = new_commits[-1]
+        # ctime 可能是 int（Unix 时间戳）或 str
+        oldest_ctime = oldest_new_commit.get("ctime", 0)
+        if isinstance(oldest_ctime, str):
+            try:
+                oldest_ctime = int(oldest_ctime)
+            except Exception:
+                oldest_ctime = 0
+
+        # 上次 commit 的时间（用于筛选文件，稍微往前一点避免时间边界问题）
+        last_commit_data = next((c for c in commits if c["id"] == last_commit_id), None)
+        last_ctime = 0
+        if last_commit_data:
+            last_ctime = last_commit_data.get("ctime", 0)
+            if isinstance(last_ctime, str):
+                try:
+                    last_ctime = int(last_ctime)
+                except Exception:
+                    last_ctime = 0
+
+        # 使用最旧新 commit 时间（减1秒容错）作为文件筛选基准
+        filter_after_ts = max(0, oldest_ctime - 1)
+
+        logger.info(f"[Poller] 筛选 mtime >= {filter_after_ts} 的文件 (最旧新 commit ctime={oldest_ctime})")
+
+        # 5. 遍历仓库所有文件
+        try:
+            all_files = await poller.list_all_files(settings.intranet_repo_id)
+        except Exception as e:
+            logger.error(f"[Poller] 遍历仓库文件失败: {e}")
+            # 即使获取文件失败，也更新进度避免死循环
+            latest_commit_id = new_commits[0]["id"]
+            _save_last_commit_id(db, settings.intranet_repo_id, latest_commit_id)
+            db.commit()
+            return
+
+        logger.info(f"[Poller] 仓库共 {len(all_files)} 个文件，开始筛选...")
+
         expire_at = datetime.utcnow() + timedelta(hours=settings.review_token_expire_hours)
 
-        for commit in new_commits:
-            commit_id = commit["id"]
-            creator = commit.get("creator_name", commit.get("creator", "unknown"))
-            creator_email = commit.get("creator", "")
-            if "@" not in creator_email:
-                creator_email = ""
+        # 取最新 commit 的上传者信息（作为默认 creator）
+        latest_new_commit = new_commits[0]
+        creator = latest_new_commit.get("creator_name", latest_new_commit.get("creator", "unknown"))
+        creator_email = latest_new_commit.get("creator", "")
+        if "@" not in creator_email:
+            creator_email = ""
 
-            # 尝试获取 commit 的文件变更
-            target_files: List[str] = []
-            
-            try:
-                diff = await poller.get_commit_diff(settings.intranet_repo_id, commit_id)
-                # 解析 commit_diffs 列表，提取新增和修改的文件
-                # 兼容多种返回格式:
-                # 格式1: {"commit_info": {...}, "commit_diffs": [{"op_type": "new|modified", "path": "..."}]}
-                # 格式2: {"added": [...], "modified": [...], "deleted": [...]}
-                
-                # 尝试格式1: commit_diffs 数组
-                commit_diffs = diff.get("commit_diffs", [])
-                if commit_diffs:
-                    for item in commit_diffs:
-                        op_type = item.get("op_type", "")
-                        if op_type in ("new", "modified", "add", "edit"):
-                            path = item.get("path", "")
-                            if path:
-                                target_files.append(path)
-                else:
-                    # 尝试格式2: 直接的 added/modified 数组
-                    target_files = diff.get("added", []) + diff.get("modified", [])
-                    
-            except Exception as e:
-                logger.warning(f"[Poller] 获取 commit {commit_id[:8]} diff 失败: {e}")
-                logger.info(f"[Poller] 尝试使用目录列表 API 获取 commit {commit_id[:8]} 的文件...")
-                
-                # 备选方案1：使用目录列表 API 获取该 commit 中的所有文件
-                try:
-                    dirents = await poller.get_commit_dir(settings.intranet_repo_id, commit_id, "/")
-                    # dirents 格式: [{"name": "file.txt", "type": "file", "size": 1234, ...}]
-                    for item in dirents:
-                        if item.get("type") == "file":
-                            file_name = item.get("name", "")
-                            if file_name:
-                                target_files.append(f"/{file_name}")
-                    logger.info(f"[Poller] 从目录列表获取到 {len(target_files)} 个文件")
-                except Exception as e2:
-                    logger.warning(f"[Poller] 目录列表 API 也失败: {e2}")
-                    
-                    # 备选方案2：从 commit desc 解析文件信息（Seafile 6.x 的 commit desc 可能包含文件名）
-                    commit_desc = commit.get("desc", "")
-                    logger.info(f"[Poller] 尝试从 commit desc 解析: {commit_desc}")
-                    
-                    # 如果 desc 包含 "Added" 或 "Modified" 等关键字，尝试提取文件名
-                    if commit_desc and ("Added" in commit_desc or "Modified" in commit_desc or "上传" in commit_desc):
-                        # 尝试从 desc 提取文件名（简单启发式）
-                        import re
-                        # 匹配引号中的文件名或路径
-                        matches = re.findall(r'["\']([^"\']+)["\']', commit_desc)
-                        if matches:
-                            for match in matches:
-                                if "." in match:  # 假设包含点的是文件
-                                    target_files.append(match if match.startswith("/") else f"/{match}")
-                            logger.info(f"[Poller] 从 commit desc 解析到 {len(target_files)} 个文件")
-                    
-                    if not target_files:
-                        logger.error(f"[Poller] 无法获取 commit {commit_id[:8]} 的文件信息，跳过")
-                        continue
+        # 6. 筛选新增/修改的文件（mtime 在最旧新 commit 时间之后）
+        new_files = [f for f in all_files if f.get("mtime", 0) >= filter_after_ts]
 
-            for file_path in target_files:
-                # 过滤空值
-                if not file_path:
-                    continue
+        if new_files:
+            logger.info(f"[Poller] 筛选到 {len(new_files)} 个新增/修改文件")
+        else:
+            logger.info(f"[Poller] 未发现新增/修改文件（可能是删除/重命名操作）")
 
-                file_name = file_path.rstrip("/").split("/")[-1]
-                if not file_name:
-                    continue
+        for file_info in new_files:
+            file_path = file_info["path"]
+            file_name = file_info["name"]
 
-                # 去重：同路径+相近时间内不重复创建任务
-                if _task_exists(db, settings.intranet_repo_id, file_path, commit_id):
-                    logger.info(f"[Poller] 跳过重复任务: {file_path}")
-                    continue
+            # 使用最新 commit id 关联
+            commit_id = latest_new_commit["id"]
 
-                token = secrets.token_urlsafe(32)
-                task = ReviewTask(
-                    token=token,
-                    file_name=file_name,
-                    file_path=file_path,
-                    repo_id=settings.intranet_repo_id,
-                    commit_id=commit_id,
-                    uploader=creator,
-                    uploader_email=creator_email,
-                    status=ReviewStatus.PENDING,
-                    expire_at=expire_at,
-                )
-                db.add(task)
-                db.flush()  # 获取自增 ID
-                db.refresh(task)
+            # 去重：同路径+commit_id 不重复创建任务
+            if _task_exists(db, settings.intranet_repo_id, file_path, commit_id):
+                logger.info(f"[Poller] 跳过重复任务: {file_path}")
+                continue
 
-                logger.info(f"[Poller] 创建审核任务 #{task.id}: {file_path} (commit {commit_id[:8]})")
+            token = secrets.token_urlsafe(32)
+            task = ReviewTask(
+                token=token,
+                file_name=file_name,
+                file_path=file_path,
+                file_size=file_info.get("size", 0),
+                repo_id=settings.intranet_repo_id,
+                commit_id=commit_id,
+                uploader=creator,
+                uploader_email=creator_email,
+                status=ReviewStatus.PENDING,
+                expire_at=expire_at,
+            )
+            db.add(task)
+            db.flush()
+            db.refresh(task)
+            logger.info(f"[Poller] 创建审核任务 #{task.id}: {file_path} (mtime={file_info.get('mtime')})")
 
-                # 发送审批邮件（异步）
-                asyncio.create_task(send_review_notification(task))
+            # 发送审批邮件（异步）
+            asyncio.create_task(send_review_notification(task))
 
-        # 5. 更新进度到最新 commit（new_commits 已翻转，取最后一个即最新）
-        latest_commit_id = new_commits[-1]["id"]
+        # 7. 更新进度到最新 commit
+        latest_commit_id = new_commits[0]["id"]
         _save_last_commit_id(db, settings.intranet_repo_id, latest_commit_id)
         db.commit()
         logger.info(f"[Poller] 进度更新至 commit: {latest_commit_id[:8]}")
