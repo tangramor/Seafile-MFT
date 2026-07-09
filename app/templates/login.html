@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登录 · MFT 文件审核系统</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif;
+      background: linear-gradient(135deg, #0d47a1 0%, #1565c0 50%, #1a73e8 100%);
+      min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .login-box {
+      background: white; border-radius: 16px;
+      box-shadow: 0 8px 40px rgba(0,0,0,.25);
+      padding: 48px 44px; width: 400px; max-width: 92vw;
+    }
+    .logo { text-align: center; margin-bottom: 32px; }
+    .logo .icon { font-size: 48px; display: block; margin-bottom: 10px; }
+    .logo h1 { font-size: 22px; font-weight: 700; color: #0d47a1; }
+    .logo p  { font-size: 13px; color: #666; margin-top: 4px; }
+
+    .form-group { margin-bottom: 20px; }
+    label { display: block; font-size: 13px; font-weight: 500; color: #444; margin-bottom: 6px; }
+    input {
+      width: 100%; padding: 11px 14px; font-size: 15px;
+      border: 1.5px solid #dadce0; border-radius: 8px; outline: none;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    input:focus { border-color: #1a73e8; box-shadow: 0 0 0 3px rgba(26,115,232,.12); }
+
+    .btn-login {
+      width: 100%; padding: 12px; font-size: 16px; font-weight: 600;
+      background: linear-gradient(135deg, #1a73e8, #0d47a1);
+      color: white; border: none; border-radius: 9px; cursor: pointer;
+      transition: filter .15s, transform .1s; margin-top: 6px;
+    }
+    .btn-login:hover { filter: brightness(1.1); transform: translateY(-1px); }
+    .btn-login:active { transform: translateY(0); }
+
+    .alert-error {
+      background: #fce8e6; color: #c0392b; border: 1px solid #f5b7b1;
+      border-radius: 8px; padding: 10px 14px; font-size: 14px; margin-bottom: 18px;
+    }
+    .footer { text-align: center; font-size: 12px; color: #aaa; margin-top: 28px; }
+  </style>
+</head>
+<body>
+<div class="login-box">
+  <div class="logo">
+    <span class="icon">🔐</span>
+    <h1>MFT 文件审核系统</h1>
+    <p>请使用 LDAP 账号登录</p>
+  </div>
+
+  {% if error %}
+  <div class="alert-error">⚠️ {{ error }}</div>
+  {% endif %}
+
+  <form method="post" action="/login">
+    <input type="hidden" name="next" value="{{ next }}">
+    <div class="form-group">
+      <label for="username">用户名</label>
+      <input id="username" name="username" type="text" placeholder="输入用户名" required autofocus autocomplete="username">
+    </div>
+    <div class="form-group">
+      <label for="password">密码</label>
+      <input id="password" name="password" type="password" placeholder="输入密码" required autocomplete="current-password">
+    </div>
+    <button type="submit" class="btn-login">登 录</button>
+  </form>
+
+  <div class="footer">Seafile MFT &copy; 2024 · 内部系统，禁止外传</div>
+</div>
+</body>
+</html>

@@ -3,3 +3,4 @@
 *.zip
 *.log
 *.tar
+__pycache__/

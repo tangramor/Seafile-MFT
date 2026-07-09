@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}首页 · MFT 审核系统{% endblock %}
+
+{% block content %}
+<h2 style="font-size:20px;font-weight:700;margin-bottom:24px;">
+  👋 你好，{{ user.username }}
+</h2>
+
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px;margin-bottom:28px;">
+  {% if user.is_reviewer %}
+  <div class="card" style="text-align:center;padding:28px 20px;">
+    <div style="font-size:36px;margin-bottom:8px;">🔍</div>
+    <div style="font-size:28px;font-weight:700;color:#ea4335;">{{ pending_count or 0 }}</div>
+    <div style="font-size:13px;color:#666;margin-top:4px;">待审批任务</div>
+    <a href="/review-board" class="btn btn-primary btn-sm" style="margin-top:14px;">立即处理</a>
+  </div>
+  <div class="card" style="text-align:center;padding:28px 20px;">
+    <div style="font-size:36px;margin-bottom:8px;">📊</div>
+    <div style="font-size:28px;font-weight:700;color:#1a73e8;">全部</div>
+    <div style="font-size:13px;color:#666;margin-top:4px;">审核任务总览</div>
+    <a href="/review-board?status=" class="btn btn-outline btn-sm" style="margin-top:14px;">查看全部</a>
+  </div>
+  {% else %}
+  <div class="card" style="text-align:center;padding:28px 20px;">
+    <div style="font-size:36px;margin-bottom:8px;">📋</div>
+    <div style="font-size:28px;font-weight:700;color:#1a73e8;">{{ my_count or 0 }}</div>
+    <div style="font-size:13px;color:#666;margin-top:4px;">我的申请总数</div>
+    <a href="/my/submissions" class="btn btn-outline btn-sm" style="margin-top:14px;">查看记录</a>
+  </div>
+  {% endif %}
+
+  <div class="card" style="text-align:center;padding:28px 20px;">
+    <div style="font-size:36px;margin-bottom:8px;">⬆️</div>
+    <div style="font-size:14px;color:#444;margin-top:4px;">上传文件<br>发起审核申请</div>
+    <a href="/my/upload" class="btn btn-primary btn-sm" style="margin-top:14px;">上传文件</a>
+  </div>
+
+  <div class="card" style="text-align:center;padding:28px 20px;">
+    <div style="font-size:36px;margin-bottom:8px;">⬇️</div>
+    <div style="font-size:14px;color:#444;margin-top:4px;">下载已通过<br>的外网文件</div>
+    <a href="/downloads" class="btn btn-outline btn-sm" style="margin-top:14px;">文件下载</a>
+  </div>
+</div>
+
+<!-- 快速说明 -->
+<div class="card">
+  <div class="card-title">📖 使用说明</div>
+  <div style="font-size:14px;color:#555;line-height:1.8;">
+    {% if user.is_reviewer %}
+    <p>• 您拥有 <strong>审核权限</strong>，可以在「待审核列表」中处理申请。</p>
+    <p>• 通过审批后，系统会自动将文件同步到外网 Seafile。</p>
+    <p>• 您也可以上传文件并发起审核申请（自己的申请需他人审核）。</p>
+    {% else %}
+    <p>• 点击「上传文件」可直接通过 Web 界面上传文件到内网，系统自动发起审核申请。</p>
+    <p>• 在「我的申请」中可查看申请状态，审核完成后会通过邮件通知您。</p>
+    <p>• 申请通过后，文件将自动同步到外网，可在「下载文件」页面下载。</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

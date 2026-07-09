@@ -50,7 +50,28 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./seafile_mft.db"  # 同步 SQLite
     review_token_expire_hours: int = 72
 
-    # 轮询配置（替代 Webhook，适配 Seafile 6.x）
+    # ── LDAP 配置
+    ldap_host: str = ""                          # LDAP 服务器地址，留空则禁用 LDAP
+    ldap_port: int = 389
+    ldap_use_ssl: bool = False
+    ldap_base_dn: str = "dc=example,dc=com"      # 搜索基础 DN
+    ldap_user_dn_template: str = ""              # 如 "uid={username},ou=users,dc=example,dc=com"
+    ldap_reviewer_group: str = "mft-reviewers"   # 对应审核者的 LDAP 组名
+    ldap_admin_group: str = "mft-admins"         # 对应管理员的 LDAP 组名
+
+    # ── 默认本地 admin 密码（首次部署初始化用，留空则不创建）
+    default_admin_password: str = "admin123"
+
+    # ── Webhook 配置（Seafile >= 7.0 支持）
+    webhook_secret: str = ""           # Webhook 签名密钥（在 Seafile 后台配置时填写相同值）
+
+    # ── 文件检测模式
+    # "auto"    → 启动时查询 Seafile 版本，>=7.0 用 Webhook，否则轮询（默认）
+    # "webhook" → 强制使用 Webhook（需 Seafile >= 7.0 并在后台配置 Webhook URL）
+    # "poll"    → 强制使用轮询（兼容所有版本）
+    detection_mode: str = "auto"
+
+    # 轮询配置（适配 Seafile 6.x；auto/poll 模式下使用）
     poll_interval_seconds: int = 60   # 轮询间隔（秒），建议 30~300
     poll_on_startup: bool = True       # 启动时立即执行一次轮询
 

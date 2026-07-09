@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}审核列表 · MFT 审核系统{% endblock %}
+
+{% block content %}
+<h2 style="font-size:20px;font-weight:700;margin-bottom:20px;">🔍 审核管理</h2>
+
+<!-- 状态筛选 -->
+<div class="filter-tabs">
+  <a href="/review-board?status=pending"     class="{% if current_status=='pending' %}active{% endif %}">
+    待审批
+  </a>
+  <a href="/review-board?status=transferred" class="{% if current_status=='transferred' %}active{% endif %}">
+    已通过
+  </a>
+  <a href="/review-board?status=rejected"    class="{% if current_status=='rejected' %}active{% endif %}">
+    已拒绝
+  </a>
+  <a href="/review-board?status="            class="{% if not current_status %}active{% endif %}">
+    全部
+  </a>
+</div>
+
+<!-- 审核结果提示 -->
+{% set msg = request.query_params.get('msg') %}
+{% set acted_id = request.query_params.get('id') %}
+{% if msg == 'approved' %}
+<div class="alert alert-success">✅ 任务 #{{ acted_id }} 已通过，文件正在同步至外网...</div>
+{% elif msg == 'rejected' %}
+<div class="alert alert-warning">❌ 任务 #{{ acted_id }} 已拒绝。</div>
+{% endif %}
+
+<div class="card" style="padding:0;">
+  {% if tasks %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>文件名</th>
+          <th>上传者</th>
+          <th>大小</th>
+          <th>来源</th>
+          <th>状态</th>
+          <th>提交时间</th>
+          <th>审核人</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for task in tasks %}
+        {% set label, color = status_labels.get(task.status.value, ('未知','muted')) %}
+        <tr>
+          <td style="color:#999;font-size:12px;">#{{ task.id }}</td>
+          <td>
+            <div style="font-weight:500;">📎 {{ task.file_name }}</div>
+            <div style="font-size:11px;color:#999;margin-top:2px;" title="{{ task.file_path }}">
+              {{ task.file_path[:60] }}{% if task.file_path|length > 60 %}...{% endif %}
+            </div>
+          </td>
+          <td style="font-size:13px;">
+            {{ task.uploader }}<br>
+            <span style="font-size:11px;color:#aaa;">{{ task.uploader_email }}</span>
+          </td>
+          <td style="color:#666;font-size:12px;white-space:nowrap;">
+            {% if task.file_size >= 1048576 %}
+              {{ "%.1f"|format(task.file_size/1048576) }} MB
+            {% elif task.file_size >= 1024 %}
+              {{ "%.1f"|format(task.file_size/1024) }} KB
+            {% else %}
+              {{ task.file_size }} B
+            {% endif %}
+          </td>
+          <td style="color:#999;font-size:12px;">{{ task.source or 'poller' }}</td>
+          <td><span class="badge badge-{{ color }}">{{ label }}</span></td>
+          <td style="color:#666;font-size:12px;white-space:nowrap;">
+            {{ task.created_at.strftime('%m-%d %H:%M') }}
+          </td>
+          <td style="font-size:12px;color:#666;">
+            {% if task.reviewed_by %}{{ task.reviewed_by }}{% else %}—{% endif %}
+          </td>
+          <td>
+            {% if task.status.value == 'pending' %}
+            <!-- 审核操作弹窗触发 -->
+            <button class="btn btn-success btn-sm"
+              onclick="showModal({{ task.id }}, '{{ task.file_name|e }}', 'approve')">✅ 通过</button>
+            <button class="btn btn-danger btn-sm" style="margin-left:4px;"
+              onclick="showModal({{ task.id }}, '{{ task.file_name|e }}', 'reject')">❌ 拒绝</button>
+            {% elif task.status.value == 'transferred' %}
+            <a href="/downloads/{{ task.id }}" class="btn btn-outline btn-sm">⬇️ 下载</a>
+            {% elif task.status.value == 'failed' %}
+            <span style="color:#ea4335;font-size:12px;" title="{{ task.transfer_error }}">同步失败</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- 分页 -->
+  {% if total > page_size %}
+  <div style="padding:16px 20px;">
+    <div class="pagination">
+      {% if page > 1 %}
+        <a href="/review-board?page={{ page-1 }}&status={{ current_status or '' }}">‹ 上一页</a>
+      {% endif %}
+      <span class="current">{{ page }}</span>
+      {% if page * page_size < total %}
+        <a href="/review-board?page={{ page+1 }}&status={{ current_status or '' }}">下一页 ›</a>
+      {% endif %}
+      <span style="font-size:12px;color:#999;">共 {{ total }} 条</span>
+    </div>
+  </div>
+  {% endif %}
+
+  {% else %}
+  <div style="text-align:center;padding:60px;color:#aaa;">
+    <div style="font-size:40px;margin-bottom:12px;">🎉</div>
+    <p>{% if current_status == 'pending' %}没有待审批的任务{% else %}暂无记录{% endif %}</p>
+  </div>
+  {% endif %}
+</div>
+
+<!-- 审核弹窗 -->
+<div id="reviewModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:999;
+  display:none;align-items:center;justify-content:center;" onclick="hideModal(event)">
+  <div style="background:white;border-radius:14px;padding:32px 28px;width:460px;max-width:92vw;
+    box-shadow:0 8px 40px rgba(0,0,0,.2);" onclick="event.stopPropagation()">
+    <h3 id="modalTitle" style="font-size:17px;font-weight:700;margin-bottom:6px;"></h3>
+    <p id="modalFile" style="font-size:13px;color:#666;margin-bottom:20px;word-break:break-all;"></p>
+    <form id="modalForm" method="post">
+      <div class="form-group">
+        <label class="form-label">备注（可选）</label>
+        <textarea name="comment" class="form-control" id="modalComment" placeholder="输入备注说明..."></textarea>
+      </div>
+      <div style="display:flex;gap:10px;">
+        <button type="submit" id="modalSubmit" class="btn" style="flex:1;justify-content:center;"></button>
+        <button type="button" class="btn btn-outline" onclick="closeModal()" style="flex:1;justify-content:center;">
+          取消
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function showModal(taskId, fileName, action) {
+  const modal = document.getElementById('reviewModal');
+  const form  = document.getElementById('modalForm');
+  const title = document.getElementById('modalTitle');
+  const file  = document.getElementById('modalFile');
+  const btn   = document.getElementById('modalSubmit');
+
+  form.action = '/review-board/' + taskId + '/' + action;
+  file.textContent = '文件：' + fileName;
+  document.getElementById('modalComment').value = '';
+
+  if (action === 'approve') {
+    title.textContent = '✅ 确认通过审批';
+    btn.textContent   = '✅ 确认通过';
+    btn.className     = 'btn btn-success';
+  } else {
+    title.textContent = '❌ 确认拒绝审批';
+    btn.textContent   = '❌ 确认拒绝';
+    btn.className     = 'btn btn-danger';
+  }
+
+  modal.style.display = 'flex';
+}
+
+function hideModal(e) {
+  if (e.target === document.getElementById('reviewModal')) closeModal();
+}
+function closeModal() {
+  document.getElementById('reviewModal').style.display = 'none';
+}
+</script>
+{% endblock %}

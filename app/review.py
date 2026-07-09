@@ -15,7 +15,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from .config import get_settings
-from .models import ReviewTask, ReviewStatus, get_db
+from .models import ReviewTask, ReviewStatus, get_db, get_db_async
 from .transfer import transfer_file_to_extranet
 from .email_notify import send_result_notification
 
@@ -38,7 +38,7 @@ async def review_detail(
     request: Request,
     token: str,
     action: str = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db_async),
 ):
     """审批详情页 - 支持直接从 URL 参数快速审批"""
     task = get_valid_task_sync(token, db)
@@ -71,7 +71,7 @@ async def approve_task(
     token: str,
     reviewer_name: str = Form(default="审批人"),
     comment: str = Form(default=""),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db_async),
 ):
     """通过审批 → 触发文件传输"""
     task = get_valid_task_sync(token, db)
@@ -130,7 +130,7 @@ async def reject_task(
     token: str,
     reviewer_name: str = Form(default="审批人"),
     comment: str = Form(default=""),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db_async),
 ):
     """拒绝审批"""
     task = get_valid_task_sync(token, db)
@@ -172,7 +172,7 @@ async def admin_task_list(
     request: Request,
     status: str = None,
     page: int = 1,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db_async),
 ):
     """管理员任务列表页"""
     page_size = 20

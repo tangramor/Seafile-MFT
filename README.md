@@ -1,186 +1,263 @@
-# Seafile MFT - 内外网文件审核同步系统
+# Seafile MFT — 内外网文件审核同步系统
 
 > **MFT** = Managed File Transfer（受控文件传输）
+>
+> 在内网 Seafile 与外网 Seafile 之间建立带审批流程的安全文件传输通道。
 
 ## 功能概述
 
-当内网 Seafile 文件库有文件上传时，自动触发审批流程：
+### 核心流程
 
 ```
-内网 Seafile 上传文件
-    ↓ Webhook
-审核服务接收事件
-    ↓ 创建审核任务
-邮件通知审批人员（含一键通过/拒绝链接）
-    ↓ 审批人点击链接
-Web 审批界面（查看详情、填写意见、提交）
-    ↓ 通过后自动执行
-外网 Seafile 文件同步（保留原始路径结构）
-    ↓ 同步完成
-邮件通知上传者（结果反馈）
+内网用户上传文件到 Seafile（或通过 Web 上传）
+             │
+    ┌────────┴────────┐
+    │  自动检测新文件   │  ← Webhook（Seafile >= 7.0）或定时轮询（6.x）
+    └────────┬────────┘
+             ↓
+        创建审核任务
+             ↓
+    邮件通知审批人（含一键通过/拒绝链接）
+             ↓
+   审批人进入 Web 审核看板，查看详情并审批
+             ↓
+  ┌──────┴──────┐
+  │  通过 → 自动同步到外网 Seafile │
+  │  拒绝 → 通知上传者               │
+  └───────────────────────────────┘
 ```
+
+### 主要特性
+
+| 特性 | 说明 |
+|------|------|
+| 🔍 **智能文件检测** | 自动识别 Seafile 版本，>= 7.0 走 Webhook，< 7.0 走轮询（目录遍历 + mtime 对比），可手动指定模式 |
+| 🔐 **LDAP 认证** | 支持 LDAP 登录，按 AD 组映射角色（admin / reviewer / submitter） |
+| 👥 **本地账号** | 内置本地用户管理，管理员可创建、编辑、禁用/启用用户，分配角色 |
+| 👤 **角色权限** | 提交者（上传 + 查看自己的申请）、审核者（审核所有申请）、管理员（审核 + 用户管理） |
+| ✉️ **双 SMTP** | 内网/外网各一套邮件配置，审批链接自动指向对应网络的 App URL |
+| 📤 **Web 上传** | 用户可直接通过 Web 界面上传文件到内网 Seafile 并发起审核 |
+| 📋 **审核看板** | 审核者 Web 界面批量查看、通过、拒绝待审任务 |
+| ⬇️ **文件下载** | 审核通过后，用户可从外网 Seafile 下载已同步的文件 |
+| 🖥️ **管理后台** | 管理员可查看所有任务、管理用户、手动触发轮询 |
+| 🐳 **Docker 部署** | 一键构建，所有配置通过环境变量传递 |
 
 ## 快速开始
 
-### 1. 克隆并配置
+### 1. 准备配置文件
 
 ```bash
-git clone <this-repo>
-cd seafile-MFT
-
-# 复制配置文件
 cp .env.example .env
-# 编辑 .env，填入你的 Seafile 地址、Token、邮件配置等
+# 编辑 .env，填入 Seafile 地址/Token、SMTP、LDAP 等配置
 ```
 
-### 2. 安装依赖（本地运行）
+### 2. Docker 部署（推荐）
+
+```bash
+docker compose up -d
+
+# 查看日志
+docker compose logs -f seafile-mft
+```
+
+服务默认监听 `8081` 端口，访问 `http://<服务器IP>:8081` 进入登录页。
+
+### 3. 本地开发运行
 
 ```bash
 pip install -r requirements.txt
-pip install pydantic-settings
 uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 ```
 
-### 3. Docker 部署（推荐）
+## 配置说明
 
-```bash
-# 先配置好 .env
-docker-compose up -d
+### 完整配置项
 
-# 查看日志
-docker-compose logs -f seafile-mft
-```
-
-## 配置说明（.env）
-
-| 配置项 | 说明 | 示例 |
-|--------|------|------|
-| `INTRANET_SEAFILE_URL` | 内网 Seafile 地址 | `http://192.168.1.100:8000` |
-| `INTRANET_SEAFILE_TOKEN` | 内网 API Token | 见下方获取方法 |
-| `INTRANET_REPO_ID` | 内网监听的文件库 ID | UUID 格式 |
-| `EXTRANET_SEAFILE_URL` | 外网 Seafile 地址 | `https://seafile.company.com` |
-| `EXTRANET_SEAFILE_TOKEN` | 外网 API Token | 见下方获取方法 |
-| `EXTRANET_REPO_ID` | 外网目标文件库 ID | UUID 格式 |
-| `SMTP_HOST` | 邮件服务器 | `smtp.qq.com` |
-| `SMTP_PORT` | 邮件端口 | `465`（SSL）或 `587`（TLS） |
-| `SMTP_USER` | 发件邮箱 | `notify@company.com` |
-| `SMTP_PASSWORD` | 邮件密码/授权码 | - |
-| `REVIEWER_EMAILS` | 审批人邮箱（逗号分隔）| `a@co.com,b@co.com` |
-| `APP_BASE_URL` | 本服务对外访问地址 | `http://192.168.1.50:8080` |
-| `SECRET_KEY` | 应用密钥（随机字符串）| `openssl rand -hex 32` |
-| `WEBHOOK_SECRET` | Seafile Webhook 密钥 | 与 Seafile 后台配置一致 |
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| **内网 Seafile** | | |
+| `INTRANET_SEAFILE_URL` | 内网 Seafile 地址 | `http://seafile.internal:8000` |
+| `INTRANET_SEAFILE_TOKEN` | 内网 Seafile API Token | — |
+| `INTRANET_REPO_ID` | 内网监听的文件库 UUID | — |
+| **外网 Seafile** | | |
+| `EXTRANET_SEAFILE_URL` | 外网 Seafile 地址 | `https://seafile.example.com` |
+| `EXTRANET_SEAFILE_TOKEN` | 外网 Seafile API Token | — |
+| `EXTRANET_REPO_ID` | 外网目标文件库 UUID | — |
+| **内网 SMTP** | 审批链接指向 `INTRANET_APP_URL` | |
+| `INTRANET_SMTP_HOST` | 内网邮件服务器 | — |
+| `INTRANET_SMTP_PORT` | 端口 | `465` |
+| `INTRANET_SMTP_USER` | 发件邮箱 | — |
+| `INTRANET_SMTP_PASSWORD` | 邮件密码/授权码 | — |
+| `INTRANET_SMTP_USE_SSL` | 是否 SSL | `true` |
+| **外网 SMTP** | 审批链接指向 `EXTRANET_APP_URL`；留空则只发内网邮件 | |
+| `EXTRANET_SMTP_HOST` | 外网邮件服务器 | — |
+| `EXTRANET_SMTP_PORT` | 端口 | `465` |
+| `EXTRANET_SMTP_USER` | 发件邮箱 | — |
+| `EXTRANET_SMTP_PASSWORD` | 邮件密码/授权码 | — |
+| `EXTRANET_SMTP_USE_SSL` | 是否 SSL | `true` |
+| **应用地址** | 用于邮件中的审批链接 | |
+| `INTRANET_APP_URL` | 内网访问本服务的地址 | — |
+| `EXTRANET_APP_URL` | 外网访问本服务的地址 | — |
+| `APP_BASE_URL` | 兼容旧字段，内/外网地址均为空时回退 | `http://localhost:8080` |
+| **审批** | | |
+| `REVIEWER_EMAILS` | 审批人邮箱（逗号分隔） | — |
+| `REVIEW_TOKEN_EXPIRE_HOURS` | 邮件中审批链接有效时间 | `72` |
+| **LDAP 认证** | 留空 `LDAP_HOST` 则仅使用本地账号 | |
+| `LDAP_HOST` | LDAP 服务器地址 | — |
+| `LDAP_PORT` | LDAP 端口 | `389` |
+| `LDAP_USE_SSL` | 是否 LDAPS | `false` |
+| `LDAP_BASE_DN` | 搜索基础 DN | `dc=example,dc=com` |
+| `LDAP_USER_DN_TEMPLATE` | 用户 DN 模板（如 `uid={username},ou=users,...`） | — |
+| `LDAP_REVIEWER_GROUP` | 对应审核者的 LDAP 组名（CN） | `mft-reviewers` |
+| `LDAP_ADMIN_GROUP` | 对应管理员的 LDAP 组名（CN） | `mft-admins` |
+| **本地账号** | | |
+| `DEFAULT_ADMIN_PASSWORD` | 首次部署自动创建 admin 的密码 | `admin123` |
+| **文件检测** | | |
+| `DETECTION_MODE` | `auto` / `webhook` / `poll` | `auto` |
+| `WEBHOOK_SECRET` | Webhook HMAC 签名密钥 | — |
+| `POLL_INTERVAL_SECONDS` | 轮询间隔（秒） | `60` |
+| `POLL_ON_STARTUP` | 启动时立即执行一次轮询 | `true` |
+| **基础** | | |
+| `SECRET_KEY` | 应用密钥 | `change-me` |
+| `DATABASE_URL` | 数据库路径 | `sqlite:///./seafile_mft.db` |
 
 ### 获取 Seafile API Token
 
 ```bash
-# 方法一：通过 API 获取
 curl -d "username=admin@example.com&password=yourpass" \
   https://seafile.example.com/api2/auth-token/
-
-# 方法二：登录 Seafile → 个人设置 → API Token
 ```
 
 ### 获取 Repo ID
 
-登录 Seafile 后，进入文件库，URL 中的 UUID 即为 Repo ID：
+登录 Seafile 进入文件库，URL 中的 UUID 即为 Repo ID：
 ```
 https://seafile.example.com/library/550e8400-e29b-41d4-a716-446655440000/
-                                        ↑ 这就是 Repo ID
+                                        ↑ Repo ID
 ```
 
-## 工作原理：定时轮询（适配 Seafile 6.x）
+## 文件检测模式
 
-本系统**不依赖 Webhook**，而是通过定时调用 Seafile REST API 来检测新文件，完全兼容 Seafile 6.x 及以上版本。
+系统支持两种文件检测方式，通过 `DETECTION_MODE` 环境变量控制：
 
-### 轮询机制
+| 模式 | 说明 | 适用版本 |
+|------|------|----------|
+| `auto` | 启动时自动查询 Seafile `/api2/server-info/` 版本，>= 7.0 走 Webhook，否则走轮询 | **推荐** |
+| `webhook` | 强制使用 Webhook 实时触发 | Seafile >= 7.0 |
+| `poll` | 强制使用定时轮询 | Seafile 6.x / 7.x |
 
+### Webhook 模式（Seafile >= 7.0）
+
+在 Seafile 后台 → 系统管理 → Webhook 中添加：
 ```
-服务启动
-  ↓
-首次运行：记录当前最新 commit ID 作为起点（不产生审核任务）
-  ↓
-每隔 POLL_INTERVAL_SECONDS 秒
-  ↓
-调用 GET /api2/repos/{repo_id}/commits/ 获取最新 commits
-  ↓
-与上次记录的 commit ID 对比，找出新增 commits
-  ↓
-对每个新 commit 调用 GET /api2/repos/{repo_id}/commit/{id}/ 获取文件变更
-  ↓
-为每个新增/修改文件创建审核任务 → 发送邮件通知
-  ↓
-更新数据库中的 last_commit_id（服务重启也不会丢失进度）
+http://<服务器IP>:8081/webhook/seafile
 ```
+并设置与 `WEBHOOK_SECRET` 相同的签名密钥，实现 HMAC-SHA256 签名验证。
 
-### 配置轮询间隔
+### 轮询模式（兼容 Seafile 6.x）
 
-在 `.env` 中调整：
+系统每 `POLL_INTERVAL_SECONDS` 秒遍历内网文件库目录，通过比较文件 `mtime` 时间戳来检测新增/修改的文件。
 
-```ini
-POLL_INTERVAL_SECONDS=60   # 每 60 秒检测一次（推荐值）
-POLL_ON_STARTUP=true       # 启动时立即执行一次
-```
+> **原理**：Seafile 6.x 的部分 commit diff API 返回 404，因此采用目录遍历 + mtime 对比方案。该方案对所有 API 都返回 404 的旧版本 Seafile 完全可用。
 
-### 手动触发立即轮询
+## 用户角色与权限
 
-```bash
-curl -X POST http://your-server:8080/admin/poll-now
-```
+| 角色 | 权限 |
+|------|------|
+| **提交者** (submitter) | 上传文件到内网 Seafile、查看自己的审核申请、下载已同步的外网文件 |
+| **审核者** (reviewer) | 审核所有待审任务（通过/拒绝）、下载已同步的外网文件 |
+| **管理员** (admin) | 提交者 + 审核者 + 用户管理（创建/编辑/禁用/更改角色）+ 查看所有任务 |
+
+LDAP 用户的角色通过 AD 组映射：属于 `LDAP_ADMIN_GROUP` 则为管理员，属于 `LDAP_REVIEWER_GROUP` 则为审核者，否则为提交者。每次登录都会刷新角色。
+
+## Web 界面
+
+| 页面 | 路径 | 权限 |
+|------|------|------|
+| 登录 | `/login` | 公开 |
+| 首页 | `/dashboard` | 登录用户 |
+| 上传文件 | `/my/upload` | 所有用户 |
+| 我的申请 | `/my/submissions` | 所有用户 |
+| 审核看板 | `/review-board` | 审核者/管理员 |
+| 下载文件 | `/downloads` | 所有用户（仅自己的文件或审核者看全部） |
+| 用户管理 | `/admin/users` | 管理员 |
 
 ## API 端点
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
-| `/` | GET | 服务信息 |
-| `/health` | GET | 健康检查 |
-| `/review/{token}` | GET | 审批详情页 |
-| `/review/{token}/approve` | POST | 通过审批 |
-| `/review/{token}/reject` | POST | 拒绝审批 |
-| `/admin/tasks` | GET | 管理后台 |
+| `/` | GET | 重定向到 `/dashboard` |
+| `/health` | GET | 健康检查（含当前检测模式） |
+| `/login` | GET/POST | 登录页 / 提交登录 |
+| `/logout` | GET | 注销 |
+| `/review/{token}` | GET/POST | 邮件审批链接（详情页 / 提交审批） |
 | `/admin/poll-now` | POST | 手动触发立即轮询 |
+| `/admin/detection-mode` | GET | 查询当前文件检测模式 |
+| `/admin/users` | GET | 用户管理页面 |
+| `/admin/users/create` | POST | 创建本地用户 |
+| `/admin/users/{id}/edit` | POST | 编辑用户属性 |
+| `/admin/users/{id}/role` | POST | 修改用户角色 |
+| `/admin/users/{id}/toggle` | POST | 启用/禁用用户 |
+| `/webhook/seafile` | POST | Seafile Webhook 回调（仅 Webhook 模式） |
 | `/docs` | GET | Swagger API 文档 |
-
-## 邮件审批流程
-
-审批人收到邮件后有两种操作方式：
-
-1. **快速操作**：点击邮件中的「✅ 快速通过」或「❌ 快速拒绝」按钮
-   - 直接跳转到审批页并高亮对应表单
-2. **详情审批**：点击「🔍 查看详情后审批」
-   - 进入完整审批页，可填写详细意见
 
 ## 目录结构
 
 ```
 seafile-MFT/
 ├── app/
-│   ├── __init__.py
-│   ├── main.py          # FastAPI 主入口，启动后台轮询任务
-│   ├── config.py        # 配置管理（从 .env 加载）
-│   ├── models.py        # 数据库模型（ReviewTask + PollerState）
-│   ├── poller.py        # 定时轮询核心模块（适配 Seafile 6.x）
-│   ├── email_notify.py  # 邮件通知（SMTP）
-│   ├── review.py        # 审批逻辑路由
-│   ├── transfer.py      # 文件传输（内网→外网）
+│   ├── main.py              # FastAPI 入口，生命周期管理，自动检测模式
+│   ├── config.py            # 全局配置（双 SMTP、LDAP、检测模式等）
+│   ├── models.py            # 数据库模型（User / UserSession / ReviewTask / PollerState）
+│   ├── auth.py              # LDAP 认证、Session 管理、权限依赖、本地用户 CRUD
+│   ├── portal.py            # Web 功能路由（登录/上传/审核看板/下载/用户管理）
+│   ├── review.py            # 邮件 token 审批链接处理
+│   ├── poller.py            # 轮询核心（目录遍历 + mtime 对比，适配 Seafile 6.x）
+│   ├── webhook.py           # Webhook 回调处理（HMAC-SHA256 签名验证）
+│   ├── seafile_version.py   # Seafile 版本检测模块
+│   ├── transfer.py          # Seafile 文件传输（内网下载 → 外网上传）
+│   ├── email_notify.py      # 双 SMTP 邮件通知
 │   └── templates/
-│       ├── review.html  # 审批详情页
-│       └── admin.html   # 管理后台
+│       ├── base.html        # 统一布局（Header + 侧边栏 + 响应式）
+│       ├── login.html       # 登录页
+│       ├── dashboard.html   # 首页（按角色展示统计）
+│       ├── upload.html      # Web 文件上传页
+│       ├── my_submissions.html  # 我的申请列表
+│       ├── review_board.html    # 审核看板
+│       ├── review.html      # 邮件审批详情页
+│       ├── downloads.html   # 已同步文件下载列表
+│       ├── admin.html       # 管理后台（所有任务）
+│       └── admin_users.html # 用户管理（创建/编辑/启用禁用/角色变更）
 ├── requirements.txt
-├── .env.example
 ├── Dockerfile
 ├── docker-compose.yml
 └── README.md
 ```
 
+## 运行截图预览
+
+**审核流程示意：**
+
+```
+内网 Seafile 文件上传 → 系统检测到新文件 → 创建审核任务
+                                         → 邮件通知审批人
+                                         
+审批人收到邮件 → 点击审批链接或进入审核看板 → 查看文件详情
+                                         → 填写审批意见
+                                         → 通过 / 拒绝
+                                         
+通过 → 自动下载内网文件 → 上传到外网 Seafile → 通知上传者
+
+上传者在「下载文件」页 → 下载已同步的外网文件
+```
+
 ## 扩展建议
 
-- **多库映射**：修改 `poller.py` 支持多个内网库对应不同外网库（字典映射）
-- **文件预览**：在审批页添加 PDF/图片在线预览
+- **多库映射**：修改 poller/webhook 模块支持多个内网库对应不同外网库
 - **审批规则**：基于文件类型、大小自动通过或需要人工审批
-- **可靠性增强**：增加消息队列（如 Redis + RQ）应对并发压力
 - **多审批人**：实现会签（所有人通过）或或签（一人通过即可）
+- **文件预览**：在审批页添加 PDF / 图片在线预览
 - **审计日志**：记录所有操作到单独的审计表
-- **升级 Seafile**：升级到 7.x+ 后可切换回 Webhook 模式获得实时触发
 
 ## 许可
 

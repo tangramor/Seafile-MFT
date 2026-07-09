@@ -1,7 +1,7 @@
 """
 数据库模型定义 - 使用同步 SQLAlchemy 避免 aiosqlite 线程问题
 """
-from sqlalchemy import Column, String, Integer, DateTime, Text, Enum, create_engine
+from sqlalchemy import Column, String, Integer, DateTime, Text, Enum, Boolean, create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker, Session
 from datetime import datetime
 from contextlib import contextmanager
@@ -16,8 +16,48 @@ class ReviewStatus(str, enum.Enum):
     FAILED = "failed"             # 传输失败
 
 
+class UserRole(str, enum.Enum):
+    SUBMITTER = "submitter"   # 提交者：可上传文件、查看自己的申请
+    REVIEWER  = "reviewer"    # 审核者：可审核所有申请
+    ADMIN     = "admin"       # 管理员：同时拥有以上权限 + 用户管理
+
+
 class Base(DeclarativeBase):
     pass
+
+
+# ──────────────────────────────────────────
+# 用户表（LDAP 同步 / 手动创建）
+# ──────────────────────────────────────────
+class User(Base):
+    """系统用户表（对应 LDAP 账号或本地账号）"""
+    __tablename__ = "users"
+
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    username    = Column(String(128), unique=True, index=True, nullable=False)
+    email       = Column(String(256), default="")
+    display_name = Column(String(256), default="")
+    role        = Column(Enum(UserRole), default=UserRole.SUBMITTER, nullable=False)
+    is_active   = Column(Boolean, default=True)
+    # LDAP 用户无本地密码；本地账号（如 admin）才有
+    password_hash = Column(String(256), default="")
+    last_login  = Column(DateTime, nullable=True)
+    created_at  = Column(DateTime, default=datetime.utcnow)
+
+
+# ──────────────────────────────────────────
+# Web Session 表（服务端 Session）
+# ──────────────────────────────────────────
+class UserSession(Base):
+    """Web 登录 Session（存 DB，避免依赖 Redis）"""
+    __tablename__ = "user_sessions"
+
+    session_id  = Column(String(128), primary_key=True)
+    user_id     = Column(Integer, nullable=False, index=True)
+    username    = Column(String(128), nullable=False)
+    role        = Column(String(32), nullable=False)
+    created_at  = Column(DateTime, default=datetime.utcnow)
+    expires_at  = Column(DateTime, nullable=False)
 
 
 class ReviewTask(Base):
@@ -37,6 +77,8 @@ class ReviewTask(Base):
     # 上传者信息
     uploader = Column(String(256), default="")
     uploader_email = Column(String(256), default="")
+    # 来源：poller（轮询检测）或 web（Web 界面上传）
+    source = Column(String(32), default="poller")
 
     # 审批状态
     status = Column(Enum(ReviewStatus), default=ReviewStatus.PENDING, index=True)

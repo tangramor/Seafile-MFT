@@ -4,6 +4,7 @@ services:
   seafile-mft:
     build: .
     container_name: seafile-mft
+    image: seafile-mft:latest
     restart: unless-stopped
     ports:
       - "8081:8080"
@@ -45,8 +46,24 @@ services:
       - SECRET_KEY=${SECRET_KEY:-change-me}
       - DATABASE_URL=${DATABASE_URL:-sqlite:///./seafile_mft.db}
       - REVIEW_TOKEN_EXPIRE_HOURS=${REVIEW_TOKEN_EXPIRE_HOURS:-72}
+      # ── LDAP 认证
+      - LDAP_HOST=${LDAP_HOST:-}
+      - LDAP_PORT=${LDAP_PORT:-389}
+      - LDAP_USE_SSL=${LDAP_USE_SSL:-false}
+      - LDAP_BASE_DN=${LDAP_BASE_DN:-dc=example,dc=com}
+      - LDAP_USER_DN_TEMPLATE=${LDAP_USER_DN_TEMPLATE:-}
+      - LDAP_REVIEWER_GROUP=${LDAP_REVIEWER_GROUP:-mft-reviewers}
+      - LDAP_ADMIN_GROUP=${LDAP_ADMIN_GROUP:-mft-admins}
+      - DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD:-admin123}
       - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-60}
       - POLL_ON_STARTUP=${POLL_ON_STARTUP:-true}
+      # ── 文件检测模式（auto/webhook/poll）
+      # auto    = 启动时自动检测 Seafile 版本（>=7.0 用 Webhook，否则轮询）
+      # webhook = 强制 Webhook（需 Seafile >= 7.0 并在后台配置 Webhook URL）
+      # poll    = 强制轮询（兼容所有版本，默认推荐）
+      - DETECTION_MODE=${DETECTION_MODE:-auto}
+      # Webhook 签名密钥（Seafile 后台配置 Webhook 时填写相同值，留空则跳过验证）
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
