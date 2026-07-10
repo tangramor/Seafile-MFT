@@ -63,6 +63,8 @@ pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 ```
 
+![Main Page](./images/Seafile-MFT-en-01.png)
+
 ## Configuration Reference
 
 ### All Configuration Items
@@ -235,6 +237,8 @@ LDAP user roles are mapped via AD groups: members of `LDAP_ADMIN_GROUP` become a
 | Review Board | `/review-board` | Reviewer / Admin |
 | Download Files | `/downloads` | All users (own files only, or all for reviewers) |
 | User Management | `/admin/users` | Admin |
+
+![Main Page](./images/Seafile-MFT-en-02.png)
 
 ## API Endpoints
 

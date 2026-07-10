@@ -61,6 +61,8 @@ pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 ```
 
+![Main Page](./images/Seafile-MFT-zh-01.png)
+
 ## 配置说明
 
 ### 完整配置项
@@ -233,6 +235,8 @@ LDAP 用户的角色通过 AD 组映射：属于 `LDAP_ADMIN_GROUP` 则为管理
 | 审核看板 | `/review-board` | 审核者/管理员 |
 | 下载文件 | `/downloads` | 所有用户（仅自己的文件或审核者看全部） |
 | 用户管理 | `/admin/users` | 管理员 |
+
+![Main Page](./images/Seafile-MFT-zh-02.png)
 
 ## API 端点
 
