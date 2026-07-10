@@ -49,7 +49,7 @@ async def lifespan(app: FastAPI):
 
     # ── 检测文件检测模式 ──────────────────────────────────────────────────
     from .seafile_version import detect_detection_mode
-    mode, seafile_version = await detect_detection_mode(
+    mode, seafile_version, is_pro = await detect_detection_mode(
         settings.intranet_seafile_url,
         settings.intranet_seafile_token,
     )
@@ -63,9 +63,16 @@ async def lifespan(app: FastAPI):
         webhook_url_hint = (
             f"{(settings.intranet_app_url or settings.app_base_url).rstrip('/')}/webhook/seafile"
         )
-        logger.info(f"[App] 检测模式     : Webhook（Seafile {seafile_version or '?'}）")
+        edition = "专业版" if is_pro else "社区版"
+        logger.info(f"[App] 检测模式     : Webhook（Seafile {seafile_version or '?'} {edition}）")
         logger.info(f"[App] Webhook URL  : {webhook_url_hint}")
-        logger.info(f"[App] ⚠️  请确认 Seafile 后台已配置上方 Webhook URL")
+        if not is_pro:
+            logger.warning(
+                "[App] ⚠️  当前为 Seafile 社区版，Webhook API 不可用！"
+                "请将 DETECTION_MODE 改为 poll 后重启。"
+            )
+        else:
+            logger.info(f"[App] ⚠️  请确认 Seafile 后台已配置上方 Webhook URL")
         if not settings.webhook_secret:
             logger.warning("[App] ⚠️  未配置 WEBHOOK_SECRET，签名验证已跳过（建议生产环境配置）")
         else:

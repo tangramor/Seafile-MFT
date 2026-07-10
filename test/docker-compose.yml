@@ -1,0 +1,249 @@
+# ============================================================
+# Seafile MFT 测试环境
+# 模拟内网 → 审核 → 外网 的完整流程
+#
+# 架构：
+#   intranet-net                        extranet-net
+#   ┌────────────────────────┐          ┌────────────────────────┐
+#   │  db-intra   memcached  │          │  db-extra   memcached  │
+#   │    │           │       │          │    │           │       │
+#   │    └─────┬─────┘       │          │    └─────┬─────┘       │
+#   │     seafile-intranet   │          │     seafile-extranet   │
+#   │      :8001→80          │          │      :8002→80          │
+#   │          │             │          │          ▲             │
+#   │       webhook          │          │      上传文件          │
+#   │          ▼             │          │          │             │
+#   │   ┌──────────────┐     │          │   ┌──────────────┐     │
+#   │   │     MFT      │─────┼──────────┼───│     MFT      │     │
+#   │   └──────────────┘     │          │   └──────────────┘     │
+#   │     :8081→8080         │          │                        │
+#   └────────────────────────┘          └────────────────────────┘
+#
+# MFT 跨两个网络：
+#   - intranet-net: 检测内网新文件（Webhook）、下载待审核文件
+#   - extranet-net: 审核通过后上传文件到外网
+# ============================================================
+
+networks:
+  intranet-net:
+    name: seafile-intranet-test
+    driver: bridge
+  extranet-net:
+    name: seafile-extranet-test
+    driver: bridge
+
+volumes:
+  intranet-db-data:
+  intranet-seafile-data:
+  extranet-db-data:
+  extranet-seafile-data:
+  mft-data:
+
+services:
+
+  # ══════════════════════════════════════════════════════════
+  #  内网 Seafile 套件：MariaDB + Memcached + Seafile
+  # ══════════════════════════════════════════════════════════
+
+  seafile-intranet-db:
+    image: mariadb:10.11
+    container_name: seafile-intranet-db
+    restart: unless-stopped
+    networks:
+      - intranet-net
+    volumes:
+      - intranet-db-data:/var/lib/mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=seafile123
+      - MYSQL_LOG_CONSOLE=true
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  seafile-intranet-memcached:
+    image: memcached:1.6-alpine
+    container_name: seafile-intranet-memcached
+    restart: unless-stopped
+    networks:
+      intranet-net:
+        aliases:
+          - memcached                            # Seafile 硬编码连接 host:memcached
+    command: memcached -m 256
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "11211"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  seafile-intranet:
+    image: seafileltd/seafile-mc:12.0-latest
+    container_name: seafile-intranet
+    hostname: intranet.local                    # Seafile 要求至少包含一个点的域名格式
+    restart: unless-stopped
+    networks:
+      intranet-net:
+        aliases:
+          - intranet.local                      # Docker DNS 别名
+    ports:
+      - "8001:80"
+    volumes:
+      - intranet-seafile-data:/shared
+    environment:
+      - TZ=Asia/Shanghai
+      - DB_HOST=seafile-intranet-db
+      - DB_ROOT_PASSWD=seafile123
+      - JWT_PRIVATE_KEY=9e3dfdd00cb774c246615ae91291c834ebc98b1e
+      - SEAFILE_SERVER_LETSENCRYPT=false
+      - FORCE_PERMISSIONS_CHECK=true
+      - INIT_SEAFILE_ADMIN_EMAIL=admin@intranet.local
+      - INIT_SEAFILE_ADMIN_PASSWORD=admin123456
+      - SEAFILE_SERVER_HOSTNAME=localhost:8001
+      - SEAFILE_SERVER_PROTOCOL=http
+    depends_on:
+      seafile-intranet-db:
+        condition: service_healthy
+      seafile-intranet-memcached:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:80/api2/server-info/ || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 30
+      start_period: 90s
+
+  # ══════════════════════════════════════════════════════════
+  #  外网 Seafile 套件：MariaDB + Memcached + Seafile
+  # ══════════════════════════════════════════════════════════
+
+  seafile-extranet-db:
+    image: mariadb:10.11
+    container_name: seafile-extranet-db
+    restart: unless-stopped
+    networks:
+      - extranet-net
+    volumes:
+      - extranet-db-data:/var/lib/mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=seafile123
+      - MYSQL_LOG_CONSOLE=true
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  seafile-extranet-memcached:
+    image: memcached:1.6-alpine
+    container_name: seafile-extranet-memcached
+    restart: unless-stopped
+    networks:
+      extranet-net:
+        aliases:
+          - memcached                            # Seafile 硬编码连接 host:memcached
+    command: memcached -m 256
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "11211"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  seafile-extranet:
+    image: seafileltd/seafile-mc:12.0-latest
+    container_name: seafile-extranet
+    hostname: extranet.local                    # Seafile 要求至少包含一个点的域名格式
+    restart: unless-stopped
+    networks:
+      extranet-net:
+        aliases:
+          - extranet.local                      # Docker DNS 别名
+    ports:
+      - "8002:80"
+    volumes:
+      - extranet-seafile-data:/shared
+    environment:
+      - TZ=Asia/Shanghai
+      - DB_HOST=seafile-extranet-db
+      - DB_ROOT_PASSWD=seafile123
+      - JWT_PRIVATE_KEY=88a669df456036384f5a382bc7af625464645189
+      - SEAFILE_SERVER_LETSENCRYPT=false
+      - FORCE_PERMISSIONS_CHECK=true
+      - INIT_SEAFILE_ADMIN_EMAIL=admin@extranet.local
+      - INIT_SEAFILE_ADMIN_PASSWORD=admin123456
+      - SEAFILE_SERVER_HOSTNAME=localhost:8002
+      - SEAFILE_SERVER_PROTOCOL=http
+    depends_on:
+      seafile-extranet-db:
+        condition: service_healthy
+      seafile-extranet-memcached:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:80/api2/server-info/ || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 30
+      start_period: 90s
+
+  # ══════════════════════════════════════════════════════════
+  #  MFT 审核应用 —— 连接内网和外网两个网络
+  # ══════════════════════════════════════════════════════════
+
+  seafile-mft:
+    build: ..
+    container_name: seafile-mft-test
+    image: seafile-mft:latest
+    restart: unless-stopped
+    networks:
+      - intranet-net
+      - extranet-net
+    ports:
+      - "8081:8080"
+    volumes:
+      - mft-data:/app/data
+    environment:
+      - TZ=Asia/Shanghai
+
+      # ── 内网 Seafile ──
+      - INTRANET_SEAFILE_URL=http://intranet.local
+      - INTRANET_SEAFILE_TOKEN=${INTRANET_TOKEN:-}
+      - INTRANET_REPO_ID=${INTRANET_REPO_ID:-}
+
+      # ── 外网 Seafile ──
+      - EXTRANET_SEAFILE_URL=http://extranet.local
+      - EXTRANET_SEAFILE_TOKEN=${EXTRANET_TOKEN:-}
+      - EXTRANET_REPO_ID=${EXTRANET_REPO_ID:-}
+
+      # ── 检测模式 ──
+      - DETECTION_MODE=poll
+      - WEBHOOK_SECRET=test-webhook-secret-2024
+      - POLL_INTERVAL_SECONDS=30
+      - POLL_ON_STARTUP=true
+
+      # ── 应用地址 ──
+      - APP_BASE_URL=http://localhost:8081
+      - INTRANET_APP_URL=http://localhost:8081
+      - EXTRANET_APP_URL=http://localhost:8081
+
+      # ── 数据库 ──
+      - DATABASE_URL=sqlite:///./data/seafile_mft_test.db
+      - SECRET_KEY=test-secret-do-not-use-in-production
+      - REVIEW_TOKEN_EXPIRE_HOURS=72
+      - DEFAULT_ADMIN_PASSWORD=admin123
+
+      # ── 邮件（留空，测试不需要） ──
+      - REVIEWER_EMAILS=reviewer@test.local
+      - SMTP_HOST=
+      - SMTP_USER=
+      - SMTP_PASSWORD=
+
+      # ── LDAP（禁用） ──
+      - LDAP_HOST=
+
+    depends_on:
+      seafile-intranet:
+        condition: service_healthy
+      seafile-extranet:
+        condition: service_healthy

@@ -6,11 +6,17 @@
 2. 上传到外网 Seafile（使用 Seafile REST API / seafile-python-sdk）
 
 Seafile API 文档：https://download.seafile.com/published/seafile-user-manual/develop/web_api_v2.1.md
+
+关于 seafhttp URL 重写：
+  - Seafile 的 FILE_SERVER_ROOT 可能配置为浏览器可访问的地址（如 localhost:8001）
+  - 但 MFT 容器内需要通过 Docker 内部域名访问 seafhttp
+  - 本模块会自动将 seafhttp URL 的 host 重写为 base_url 的 host
 """
 import io
 import os
 import tempfile
 from typing import Tuple
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 
@@ -19,11 +25,30 @@ from .models import ReviewTask
 
 
 class SeafileClient:
-    """Seafile REST API 客户端封装"""
+    """Seafile REST API 客户端封装
+
+    base_url 必须为容器内可访问的地址（如 http://intranet.local），
+    所有 seafhttp 链接中的 host 会被自动重写为此地址。
+    """
 
     def __init__(self, base_url: str, token: str):
         self.base_url = base_url.rstrip("/")
+        self.base_host = urlparse(self.base_url).netloc  # 用于重写 seafhttp URL
         self.headers = {"Authorization": f"Token {token}"}
+
+    def _rewrite_seafhttp_url(self, url: str) -> str:
+        """将 seafhttp URL 的 host 重写为 base_url 的 host
+
+        例如：http://localhost:8001/seafhttp/upload-api/xxx
+          →  http://intranet.local/seafhttp/upload-api/xxx
+        """
+        if not url:
+            return url
+        parsed = urlparse(url)
+        # 只重写 seafhttp 路径的 URL
+        if parsed.netloc == self.base_host:
+            return url  # 无需重写
+        return urlunparse(parsed._replace(netloc=self.base_host))
 
     async def get_download_link(self, repo_id: str, file_path: str) -> str:
         """获取文件下载链接"""
@@ -32,8 +57,8 @@ class SeafileClient:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(url, params=params, headers=self.headers)
             resp.raise_for_status()
-            # 返回的是带引号的 URL 字符串
-            return resp.text.strip('"')
+            raw_url = resp.text.strip('"')
+            return self._rewrite_seafhttp_url(raw_url)
 
     async def download_file(self, repo_id: str, file_path: str) -> bytes:
         """下载文件内容到内存"""
@@ -50,7 +75,8 @@ class SeafileClient:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(url, params=params, headers=self.headers)
             resp.raise_for_status()
-            return resp.text.strip('"')
+            raw_url = resp.text.strip('"')
+            return self._rewrite_seafhttp_url(raw_url)
 
     async def upload_file(
         self,
