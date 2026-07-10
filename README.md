@@ -1,5 +1,7 @@
 # Seafile MFT — Internal-External File Review & Sync System
 
+English | [中文](./README_zh.md)
+
 > **MFT** = Managed File Transfer
 >
 > A secure file transfer channel with an approval workflow between internal and external Seafile instances.
@@ -8,24 +10,15 @@
 
 ### Core Workflow
 
-```
-Internal user uploads file to Seafile (or via Web upload)
-             │
-    ┌────────┴────────┐
-    │  Auto-detect new │  ← Webhook (Seafile >= 7.0) or scheduled polling (6.x)
-    │  files           │
-    └────────┬────────┘
-             ↓
-    Create review task
-             ↓
-    Email notification to reviewer (with one-click approve/reject link)
-             ↓
-   Reviewer opens Web review board, reviews details, approves/rejects
-             ↓
-  ┌──────┴──────┐
-  │  Approved → Auto sync to external Seafile │
-  │  Rejected → Notify submitter               │
-  └────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    A["🖥️ Internal user uploads file to Seafile<br>（or via Web upload）"] --> B{"🔍 Auto-detect new files"}
+    B -->|"Webhook (Pro ≥ 7.0)<br>or Polling (6.x / Community)"| C["📋 Create review task"]
+    C --> D["✉️ Email notification to reviewer<br>（with one-click approve/reject link）"]
+    D --> E["👀 Reviewer opens review board<br>reviews details, approves/rejects"]
+    E --> F{"⚖️ Decision"}
+    F -->|"✅ Approved"| G["🔄 Auto sync to<br>external Seafile"]
+    F -->|"❌ Rejected"| H["📢 Notify submitter"]
 ```
 
 ### Key Features
@@ -299,17 +292,22 @@ seafile-MFT/
 
 **Review flow overview:**
 
-```
-Internal Seafile upload → System detects new file → Review task created
-                                                 → Email notification to reviewer
+```mermaid
+sequenceDiagram
+    actor Submitter
+    participant Intranet as Internal Seafile
+    participant MFT
+    participant Reviewer
+    participant Extranet as External Seafile
 
-Reviewer receives email → Clicks approval link or opens review board → Reviews file details
-                                                                    → Fills in review comments
-                                                                    → Approves / Rejects
-
-Approved → Auto-download from internal → Upload to external Seafile → Notify submitter
-
-Submitter goes to "Download Files" → Downloads synced external file
+    Submitter->>Intranet: Upload file
+    MFT->>Intranet: Poll / Webhook detects new file
+    MFT->>Reviewer: Send email with approval link
+    Reviewer->>MFT: Open review board, approve
+    MFT->>Intranet: Download file
+    MFT->>Extranet: Upload file
+    MFT->>Submitter: Notify sync complete
+    Submitter->>MFT: Download synced file
 ```
 
 ## Extension Ideas

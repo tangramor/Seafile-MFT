@@ -4,31 +4,25 @@
 
 ## 架构
 
-```
-                    Docker Host
-  ┌────────────────────────────────────────────┐
-  │                                             │
-  │   intranet-net           extranet-net       │
-  │   ┌─────────────┐       ┌─────────────┐    │
-  │   │ 内网 Seafile │       │ 外网 Seafile │    │
-  │   │ port 8001    │       │ port 8002    │    │
-  │   │              │       │              │    │
-  │   │   轮询检测 ──┼───┐   │              │    │
-  │   │   (30s间隔)  │   │   │              │    │
-  │   └─────────────┘   │   └─────────────┘    │
-  │                      ▼                      │
-  │                 ┌─────────┐                 │
-  │                 │   MFT   │                 │
-  │                 │port 8081│                 │
-  │                 └─────────┘                 │
-  │                      │                       │
-  │              审核通过后上传 ────────────────▶ │
-  └────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Docker["🐳 Docker Host"]
+        subgraph intranet["🔒 intranet-net"]
+            seafile_int["🖥️ 内网 Seafile<br>port 8001"]
+        end
+        subgraph extranet["🌐 extranet-net"]
+            seafile_ext["🖥️ 外网 Seafile<br>port 8002"]
+        end
+        mft["🔀 MFT<br>port 8081"]
+    end
 
-  MFT 连接两个网络：
-  - 内网: 轮询检测文件变更 → 创建审核任务 → 发送邮件
-  - 外网: 审核通过 → 下载内网文件 → 上传到外网
+    seafile_int -->|"轮询检测<br>（30s 间隔）"| mft
+    mft -->|"审核通过后<br>上传"| seafile_ext
 ```
+
+MFT 连接两个网络：
+- 内网: 轮询检测文件变更 → 创建审核任务 → 发送邮件
+- 外网: 审核通过 → 下载内网文件 → 上传到外网
 
 ## 版本检测与文件检测模式
 

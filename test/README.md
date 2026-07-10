@@ -1,34 +1,30 @@
 # Seafile MFT Test Environment
 
+English | [中文](./README_zh.md)
+
 Simulates the complete internal → review → external file sync workflow using Docker networks.
 
 ## Architecture
 
-```
-                    Docker Host
-  ┌────────────────────────────────────────────┐
-  │                                             │
-  │   intranet-net           extranet-net       │
-  │   ┌─────────────────┐   ┌─────────────────┐ │
-  │   │ Internal Seafile│   │ External Seafile│ │
-  │   │ port 8001       │   │ port 8002       │ │
-  │   │                 │   │                 │ │
-  │   │  Poll detection ├─┐ │                 │ │
-  │   │  (30s interval) │ │ │                 │ │
-  │   └─────────────────┘ │ └─────────────────┘ │
-  │                        ▼                     │
-  │                  ┌──────────┐                │
-  │                  │   MFT    │                │
-  │                  │ port 8081│                │
-  │                  └──────────┘                │
-  │                        │                      │
-  │             Upload after approval ──────────▶ │
-  └──────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Docker["🐳 Docker Host"]
+        subgraph intranet["🔒 intranet-net"]
+            seafile_int["🖥️ Internal Seafile<br>port 8001"]
+        end
+        subgraph extranet["🌐 extranet-net"]
+            seafile_ext["🖥️ External Seafile<br>port 8002"]
+        end
+        mft["🔀 MFT<br>port 8081"]
+    end
 
-  MFT connects to both networks:
-  - Internal: Poll for file changes → create review tasks → send emails
-  - External: On approval → download internal file → upload to external
+    seafile_int -->|"Poll detection<br>（30s interval）"| mft
+    mft -->|"Upload after<br>approval"| seafile_ext
 ```
+
+MFT connects to both networks:
+- Internal: Poll for file changes → create review tasks → send emails
+- External: On approval → download internal file → upload to external
 
 ## Version Detection & File Detection Modes
 
