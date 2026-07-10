@@ -67,7 +67,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 
 ### 4. Local Testing
 
-[Local Testing](./test/README.md)。
+[Local Testing](./test/README.md). Local testing will create 2 docker networks as intranet and extranet, and deploy 2 seafile containers in the 2 networks, then start Seafile-MFT container, access through `http://localhost:8081`.
 
 
 ## Configuration Reference

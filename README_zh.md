@@ -65,7 +65,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 
 ### 4. 本地测试
 
-[本地测试说明](./test/README_zh.md)。
+[本地测试说明](./test/README_zh.md)。本地测试会创建两个 docker 网络，分别作为内网和外网，然后在两个网络中分别部署内外网 Seafile 容器，最后启动 Seafile-MFT 容器，通过 `http://localhost:8081` 访问。
 
 
 ## 配置说明
