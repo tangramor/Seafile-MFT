@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 20px;">
+<h2>{{ _("📄 文件审批通知") }}</h2>
+<h3>{{ _("您上传的文件审批结果通知") }}</h3>
+<p><b>{{ _("文件名：") }}</b>{{ file_name }}</p>
+<p><b>{{ _("审批结果：") }}</b>{{ status_text }}</p>
+<p><b>{{ _("审批人：") }}</b>{{ reviewer_name }}</p>
+<p><b>{{ _("审批时间：") }}</b>{{ review_time }}</p>
+{% if extranet_path %}
+<p><b>{{ _("外网路径：") }}</b>{{ extranet_path }}</p>
+{% endif %}
+</body>
+</html>
