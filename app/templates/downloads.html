@@ -1,10 +1,10 @@
 {% extends "base.html" %}
-{% block title %}文件下载 · MFT 审核系统{% endblock %}
+{% block title %}{{ _("文件下载") }} · {{ _("MFT 审核系统") }}{% endblock %}
 
 {% block content %}
-<h2 style="font-size:20px;font-weight:700;margin-bottom:20px;">⬇️ 文件下载</h2>
+<h2 style="font-size:20px;font-weight:700;margin-bottom:20px;">⬇️ {{ _("文件下载") }}</h2>
 <p style="font-size:13px;color:#666;margin-bottom:20px;">
-  以下文件已通过审批并同步至外网，可直接下载。
+  {{ _("以下文件已通过审批并同步至外网，可直接下载。") }}
 </p>
 
 <div class="card" style="padding:0;">
@@ -14,12 +14,12 @@
       <thead>
         <tr>
           <th>#</th>
-          <th>文件名</th>
-          <th>上传者</th>
-          <th>大小</th>
-          <th>外网路径</th>
-          <th>同步时间</th>
-          <th>操作</th>
+          <th>{{ _("文件名") }}</th>
+          <th>{{ _("上传者") }}</th>
+          <th>{{ _("大小") }}</th>
+          <th>{{ _("外网路径") }}</th>
+          <th>{{ _("同步时间") }}</th>
+          <th>{{ _("操作") }}</th>
         </tr>
       </thead>
       <tbody>
@@ -45,7 +45,7 @@
             {% if task.transferred_at %}{{ task.transferred_at.strftime('%m-%d %H:%M') }}{% else %}—{% endif %}
           </td>
           <td>
-            <a href="/downloads/{{ task.id }}" class="btn btn-primary btn-sm">⬇️ 下载</a>
+            <a href="/downloads/{{ task.id }}" class="btn btn-primary btn-sm">⬇️ {{ _("下载") }}</a>
           </td>
         </tr>
       {% endfor %}
@@ -57,13 +57,13 @@
   <div style="padding:16px 20px;">
     <div class="pagination">
       {% if page > 1 %}
-        <a href="/downloads?page={{ page-1 }}">‹ 上一页</a>
+        <a href="/downloads?page={{ page-1 }}">‹ {{ _("上一页") }}</a>
       {% endif %}
       <span class="current">{{ page }}</span>
       {% if page * page_size < total %}
-        <a href="/downloads?page={{ page+1 }}">下一页 ›</a>
+        <a href="/downloads?page={{ page+1 }}">{{ _("下一页") }} ›</a>
       {% endif %}
-      <span style="font-size:12px;color:#999;">共 {{ total }} 条</span>
+      <span style="font-size:12px;color:#999;">{{ _("共") }} {{ total }} {{ _("条") }}</span>
     </div>
   </div>
   {% endif %}
@@ -71,7 +71,7 @@
   {% else %}
   <div style="text-align:center;padding:60px;color:#aaa;">
     <div style="font-size:40px;margin-bottom:12px;">📭</div>
-    <p>暂无可下载的文件</p>
+    <p>{{ _("暂无可下载的文件") }}</p>
   </div>
   {% endif %}
 </div>

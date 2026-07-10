@@ -1,42 +1,42 @@
 {% extends "base.html" %}
-{% block title %}上传文件 · MFT 审核系统{% endblock %}
+{% block title %}{{ _("上传文件 · MFT 审核系统") }}{% endblock %}
 
 {% block content %}
-<h2 style="font-size:20px;font-weight:700;margin-bottom:24px;">⬆️ 上传文件</h2>
+<h2 style="font-size:20px;font-weight:700;margin-bottom:24px;">⬆️ {{ _("上传文件") }}</h2>
 
 {% if message %}
-<div class="alert alert-{{ msg_type or 'info' }}">{{ message }}</div>
+<div class="alert alert-{{ msg_type or 'info' }}">{{ _(message) if message else '' }}</div>
 {% endif %}
 
 <div class="card" style="max-width:640px;">
-  <div class="card-title">📤 选择文件并上传</div>
+  <div class="card-title">📤 {{ _("选择文件并上传") }}</div>
   <p style="font-size:13px;color:#666;margin-bottom:20px;">
-    上传成功后，系统将自动创建审核申请并通知审核人员。审核通过后文件会自动同步至外网。
+    {{ _("上传成功后，系统将自动创建审核申请并通知审核人员。审核通过后文件会自动同步至外网。") }}
   </p>
 
   <form method="post" action="/my/upload" enctype="multipart/form-data" id="uploadForm">
     <div class="form-group">
-      <label class="form-label">目标路径（外网 Seafile 目录，留空默认根目录）</label>
-      <input type="text" name="target_path" class="form-control" placeholder="如：/项目文档/2024" value="/">
+      <label class="form-label">{{ _("目标路径（外网 Seafile 目录，留空默认根目录）") }}</label>
+      <input type="text" name="target_path" class="form-control" placeholder="{{ _('如：/项目文档/2024') }}" value="/">
     </div>
 
     <div class="form-group">
-      <label class="form-label">选择文件</label>
+      <label class="form-label">{{ _("选择文件") }}</label>
       <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
         <div class="icon">📁</div>
-        <p id="dropText">点击选择文件，或将文件拖到这里</p>
-        <p style="font-size:12px;color:#aaa;margin-top:6px;">支持任意格式，单次上传一个文件</p>
+        <p id="dropText">{{ _("点击选择文件，或将文件拖到这里") }}</p>
+        <p style="font-size:12px;color:#aaa;margin-top:6px;">{{ _("支持任意格式，单次上传一个文件") }}</p>
         <input type="file" name="file" id="fileInput" required>
       </div>
     </div>
 
     <div class="form-group">
-      <label class="form-label">备注说明（可选）</label>
-      <textarea name="comment" class="form-control" placeholder="简要说明此次上传的文件用途..."></textarea>
+      <label class="form-label">{{ _("备注说明（可选）") }}</label>
+      <textarea name="comment" class="form-control" placeholder="{{ _('简要说明此次上传的文件用途...') }}"></textarea>
     </div>
 
     <button type="submit" class="btn btn-primary" id="submitBtn">
-      ⬆️ 提交审核申请
+      ⬆️ {{ _("提交审核申请") }}
     </button>
   </form>
 </div>
@@ -50,7 +50,7 @@
 
   fileInput.addEventListener('change', () => {
     if (fileInput.files[0]) {
-      dropText.textContent = '已选择：' + fileInput.files[0].name;
+      dropText.textContent = __('已选择：') + fileInput.files[0].name;
       dropZone.style.borderColor = '#1a73e8';
       dropZone.style.background  = '#e8f0fe';
     }
@@ -71,14 +71,14 @@
       const dt = new DataTransfer();
       dt.items.add(f);
       fileInput.files = dt.files;
-      dropText.textContent = '已选择：' + f.name;
+      dropText.textContent = __('已选择：') + f.name;
       dropZone.style.borderColor = '#1a73e8';
       dropZone.style.background  = '#e8f0fe';
     }
   });
 
   document.getElementById('uploadForm').addEventListener('submit', () => {
-    document.getElementById('submitBtn').textContent = '⏳ 上传中，请稍候...';
+    document.getElementById('submitBtn').textContent = __('⏳ 上传中，请稍候...');
     document.getElementById('submitBtn').disabled = true;
   });
 </script>

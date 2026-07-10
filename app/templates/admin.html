@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{{ get_locale() }}">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>审核任务管理后台</title>
+<title>{{ _("审核任务管理后台") }}</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -17,11 +17,11 @@
   <div class="flex items-center gap-3">
     <span class="text-2xl">🗂️</span>
     <div>
-      <h1 class="font-bold text-gray-800 text-lg">审核任务管理后台</h1>
-      <p class="text-gray-400 text-xs">Seafile 内外网文件审核系统</p>
+      <h1 class="font-bold text-gray-800 text-lg">{{ _("审核任务管理后台") }}</h1>
+      <p class="text-gray-400 text-xs">{{ _("Seafile 内外网文件审核系统") }}</p>
     </div>
   </div>
-  <a href="/admin/tasks" class="text-sm text-blue-600 hover:underline">刷新</a>
+  <a href="/admin/tasks" class="text-sm text-blue-600 hover:underline">{{ _("刷新") }}</a>
 </nav>
 
 <!-- 状态筛选 -->
@@ -42,7 +42,7 @@
        {% else %}
          bg-white text-gray-600 border-gray-300 hover:border-{{ color }}-400
        {% endif %}">
-    {{ label }}
+    {{ _(label) }}
   </a>
   {% endfor %}
 </div>
@@ -55,11 +55,11 @@
       <thead>
         <tr class="bg-gray-50 border-b border-gray-100">
           <th class="text-left px-4 py-3 text-gray-500 font-medium">ID</th>
-          <th class="text-left px-4 py-3 text-gray-500 font-medium">文件名</th>
-          <th class="text-left px-4 py-3 text-gray-500 font-medium">上传者</th>
-          <th class="text-left px-4 py-3 text-gray-500 font-medium">状态</th>
-          <th class="text-left px-4 py-3 text-gray-500 font-medium">上传时间</th>
-          <th class="text-left px-4 py-3 text-gray-500 font-medium">操作</th>
+          <th class="text-left px-4 py-3 text-gray-500 font-medium">{{ _("文件名") }}</th>
+          <th class="text-left px-4 py-3 text-gray-500 font-medium">{{ _("上传者") }}</th>
+          <th class="text-left px-4 py-3 text-gray-500 font-medium">{{ _("状态") }}</th>
+          <th class="text-left px-4 py-3 text-gray-500 font-medium">{{ _("上传时间") }}</th>
+          <th class="text-left px-4 py-3 text-gray-500 font-medium">{{ _("操作") }}</th>
         </tr>
       </thead>
       <tbody>
@@ -77,15 +77,15 @@
           <td class="px-4 py-3 text-gray-600">{{ task.uploader }}</td>
           <td class="px-4 py-3">
             {% if task.status.value == 'pending' %}
-              <span class="px-2 py-1 bg-amber-100 text-amber-700 rounded-full text-xs font-semibold">⏳ 待审批</span>
+              <span class="px-2 py-1 bg-amber-100 text-amber-700 rounded-full text-xs font-semibold">{{ _("⏳ 待审批") }}</span>
             {% elif task.status.value == 'approved' %}
-              <span class="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-semibold">✅ 已通过</span>
+              <span class="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-semibold">{{ _("✅ 已通过") }}</span>
             {% elif task.status.value == 'rejected' %}
-              <span class="px-2 py-1 bg-red-100 text-red-700 rounded-full text-xs font-semibold">❌ 已拒绝</span>
+              <span class="px-2 py-1 bg-red-100 text-red-700 rounded-full text-xs font-semibold">{{ _("❌ 已拒绝") }}</span>
             {% elif task.status.value == 'transferred' %}
-              <span class="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-semibold">🚀 已同步</span>
+              <span class="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-semibold">{{ _("🚀 已同步") }}</span>
             {% elif task.status.value == 'failed' %}
-              <span class="px-2 py-1 bg-red-100 text-red-700 rounded-full text-xs font-semibold">💥 同步失败</span>
+              <span class="px-2 py-1 bg-red-100 text-red-700 rounded-full text-xs font-semibold">{{ _("💥 同步失败") }}</span>
             {% endif %}
           </td>
           <td class="px-4 py-3 text-gray-400 text-xs">
@@ -93,7 +93,7 @@
           </td>
           <td class="px-4 py-3">
             <a href="/review/{{ task.token }}"
-               class="text-blue-600 hover:underline text-xs font-medium">查看详情</a>
+               class="text-blue-600 hover:underline text-xs font-medium">{{ _("查看详情") }}</a>
           </td>
         </tr>
         {% endfor %}
@@ -102,7 +102,7 @@
     {% else %}
     <div class="text-center py-16 text-gray-400">
       <div class="text-4xl mb-3">📭</div>
-      <p>暂无审核任务</p>
+      <p>{{ _("暂无审核任务") }}</p>
     </div>
     {% endif %}
   </div>
@@ -111,12 +111,12 @@
   <div class="flex justify-center gap-3 mt-6">
     {% if page > 1 %}
     <a href="/admin/tasks?page={{ page-1 }}{% if current_status %}&status={{ current_status }}{% endif %}"
-       class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">← 上一页</a>
+       class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">← {{ _("上一页") }}</a>
     {% endif %}
-    <span class="px-4 py-2 text-gray-500 text-sm">第 {{ page }} 页</span>
+    <span class="px-4 py-2 text-gray-500 text-sm">{{ _("第") }} {{ page }} {{ _("页") }}</span>
     {% if tasks|length == 20 %}
     <a href="/admin/tasks?page={{ page+1 }}{% if current_status %}&status={{ current_status }}{% endif %}"
-       class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">下一页 →</a>
+       class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm hover:bg-gray-50">{{ _("下一页") }} →</a>
     {% endif %}
   </div>
 </div>

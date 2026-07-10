@@ -1,20 +1,20 @@
 {% extends "base.html" %}
-{% block title %}我的申请 · MFT 审核系统{% endblock %}
+{% block title %}{{ _("我的申请") }} · {{ _("MFT 审核系统") }}{% endblock %}
 
 {% block content %}
-<h2 style="font-size:20px;font-weight:700;margin-bottom:20px;">📋 我的申请</h2>
+<h2 style="font-size:20px;font-weight:700;margin-bottom:20px;">📋 {{ _("我的申请") }}</h2>
 
 <!-- 状态筛选 -->
 <div class="filter-tabs">
-  <a href="/my/submissions" class="{% if not current_status %}active{% endif %}">全部</a>
+  <a href="/my/submissions" class="{% if not current_status %}active{% endif %}">{{ _("全部") }}</a>
   <a href="/my/submissions?status=pending"     class="{% if current_status=='pending' %}active{% endif %}">
-    待审批
+    {{ _("待审批") }}
   </a>
   <a href="/my/submissions?status=transferred" class="{% if current_status=='transferred' %}active{% endif %}">
-    已同步外网
+    {{ _("已同步外网") }}
   </a>
   <a href="/my/submissions?status=rejected"    class="{% if current_status=='rejected' %}active{% endif %}">
-    已拒绝
+    {{ _("已拒绝") }}
   </a>
 </div>
 
@@ -25,14 +25,14 @@
       <thead>
         <tr>
           <th>#</th>
-          <th>文件名</th>
-          <th>路径</th>
-          <th>大小</th>
-          <th>状态</th>
-          <th>来源</th>
-          <th>提交时间</th>
-          <th>审核时间</th>
-          <th>操作</th>
+          <th>{{ _("文件名") }}</th>
+          <th>{{ _("路径") }}</th>
+          <th>{{ _("大小") }}</th>
+          <th>{{ _("状态") }}</th>
+          <th>{{ _("来源") }}</th>
+          <th>{{ _("提交时间") }}</th>
+          <th>{{ _("审核时间") }}</th>
+          <th>{{ _("操作") }}</th>
         </tr>
       </thead>
       <tbody>
@@ -53,7 +53,7 @@
               {{ task.file_size }} B
             {% endif %}
           </td>
-          <td><span class="badge badge-{{ color }}">{{ label }}</span></td>
+          <td><span class="badge badge-{{ color }}">{{ _(label) }}</span></td>
           <td style="color:#999;font-size:12px;">{{ task.source or 'poller' }}</td>
           <td style="color:#666;font-size:12px;white-space:nowrap;">
             {{ task.created_at.strftime('%m-%d %H:%M') }}
@@ -63,12 +63,12 @@
           </td>
           <td>
             {% if task.status.value == 'transferred' %}
-            <a href="/downloads/{{ task.id }}" class="btn btn-primary btn-sm">⬇️ 下载</a>
+            <a href="/downloads/{{ task.id }}" class="btn btn-primary btn-sm">⬇️ {{ _("下载") }}</a>
             {% elif task.status.value == 'pending' %}
-            <span style="color:#aaa;font-size:12px;">等待中</span>
+            <span style="color:#aaa;font-size:12px;">{{ _("等待中") }}</span>
             {% elif task.status.value == 'rejected' %}
             <span style="color:#ea4335;font-size:12px;" title="{{ task.reviewer_comment }}">
-              已拒绝
+              {{ _("已拒绝") }}
             </span>
             {% endif %}
           </td>
@@ -83,13 +83,13 @@
   <div style="padding:16px 20px;">
     <div class="pagination">
       {% if page > 1 %}
-        <a href="/my/submissions?page={{ page-1 }}{% if current_status %}&status={{ current_status }}{% endif %}">‹ 上一页</a>
+        <a href="/my/submissions?page={{ page-1 }}{% if current_status %}&status={{ current_status }}{% endif %}">‹ {{ _("上一页") }}</a>
       {% endif %}
       <span class="current">{{ page }}</span>
       {% if page * page_size < total %}
-        <a href="/my/submissions?page={{ page+1 }}{% if current_status %}&status={{ current_status }}{% endif %}">下一页 ›</a>
+        <a href="/my/submissions?page={{ page+1 }}{% if current_status %}&status={{ current_status }}{% endif %}">{{ _("下一页") }} ›</a>
       {% endif %}
-      <span style="font-size:12px;color:#999;">共 {{ total }} 条</span>
+      <span style="font-size:12px;color:#999;">{{ _("共") }} {{ total }} {{ _("条") }}</span>
     </div>
   </div>
   {% endif %}
@@ -97,8 +97,8 @@
   {% else %}
   <div style="text-align:center;padding:60px;color:#aaa;">
     <div style="font-size:40px;margin-bottom:12px;">📭</div>
-    <p>暂无申请记录</p>
-    <a href="/my/upload" class="btn btn-primary btn-sm" style="margin-top:14px;">去上传文件</a>
+    <p>{{ _("暂无申请记录") }}</p>
+    <a href="/my/upload" class="btn btn-primary btn-sm" style="margin-top:14px;">{{ _("去上传文件") }}</a>
   </div>
   {% endif %}
 </div>

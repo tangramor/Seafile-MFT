@@ -15,21 +15,24 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from .config import get_settings
+from .i18n import _, get_locale
 from .models import ReviewTask, ReviewStatus, get_db, get_db_async
 from .transfer import transfer_file_to_extranet
 from .email_notify import send_result_notification
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
+templates.env.globals["_"] = _
+templates.env.globals["get_locale"] = get_locale
 
 
 def get_valid_task_sync(token: str, db: Session) -> ReviewTask:
     """根据 token 获取有效任务（同步）"""
     task = db.query(ReviewTask).filter(ReviewTask.token == token).first()
     if not task:
-        raise HTTPException(status_code=404, detail="审批任务不存在")
+        raise HTTPException(status_code=404, detail=_("审批任务不存在"))
     if task.expire_at and task.expire_at < datetime.utcnow():
-        raise HTTPException(status_code=410, detail="审批链接已过期")
+        raise HTTPException(status_code=410, detail=_("审批链接已过期"))
     return task
 
 
@@ -69,7 +72,7 @@ async def review_detail(
 async def approve_task(
     request: Request,
     token: str,
-    reviewer_name: str = Form(default="审批人"),
+    reviewer_name: str = Form(default=_("审批人")),
     comment: str = Form(default=""),
     db: Session = Depends(get_db_async),
 ):
@@ -82,7 +85,7 @@ async def approve_task(
             {
                 "request": request,
                 "task": task,
-                "message": f"任务当前状态为「{task.status.value}」，无法重复审批",
+                "message": _("任务当前状态为「{status}」，无法重复审批", status=task.status.value),
                 "message_type": "warning",
                 "status_labels": {
                     "pending": ("待审批", "warning"),
@@ -111,7 +114,7 @@ async def approve_task(
         {
             "request": request,
             "task": task,
-            "message": "✅ 已通过审批！文件正在同步至外网 Seafile，完成后将通知上传者。",
+            "message": _("✅ 已通过审批！文件正在同步至外网 Seafile，完成后将通知上传者。"),
             "message_type": "success",
             "status_labels": {
                 "pending": ("待审批", "warning"),
@@ -128,7 +131,7 @@ async def approve_task(
 async def reject_task(
     request: Request,
     token: str,
-    reviewer_name: str = Form(default="审批人"),
+    reviewer_name: str = Form(default=_("审批人")),
     comment: str = Form(default=""),
     db: Session = Depends(get_db_async),
 ):
@@ -136,7 +139,7 @@ async def reject_task(
     task = get_valid_task_sync(token, db)
 
     if task.status != ReviewStatus.PENDING:
-        raise HTTPException(status_code=400, detail="任务已处理，无法重复审批")
+        raise HTTPException(status_code=400, detail=_("任务已处理，无法重复审批"))
 
     task.status = ReviewStatus.REJECTED
     task.reviewed_by = reviewer_name
@@ -154,7 +157,7 @@ async def reject_task(
         {
             "request": request,
             "task": task,
-            "message": f"❌ 已拒绝审批。拒绝原因：{comment or '无'}",
+            "message": _("❌ 已拒绝审批。拒绝原因：{comment}", comment=comment or _("无")),
             "message_type": "danger",
             "status_labels": {
                 "pending": ("待审批", "warning"),

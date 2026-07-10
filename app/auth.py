@@ -19,6 +19,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from .config import get_settings
+from .i18n import _
 from .models import User, UserRole, UserSession, get_db, get_db_async
 
 logger = logging.getLogger(__name__)
@@ -281,7 +282,7 @@ def require_reviewer(
 ) -> CurrentUser:
     """依赖：要求审核者或管理员角色"""
     if not current_user.is_reviewer:
-        raise HTTPException(status_code=403, detail="需要审核权限")
+        raise HTTPException(status_code=403, detail=_("需要审核权限"))
     return current_user
 
 
@@ -290,7 +291,7 @@ def require_admin(
 ) -> CurrentUser:
     """依赖：要求管理员角色"""
     if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="需要管理员权限")
+        raise HTTPException(status_code=403, detail=_("需要管理员权限"))
     return current_user
 
 
@@ -311,7 +312,7 @@ def ensure_default_admin(db: Session):
         admin = User(
             username="admin",
             email=settings.smtp_user or "",
-            display_name="管理员",
+            display_name=_("管理员"),
             role=UserRole.ADMIN,
             password_hash=_hash_password(settings.default_admin_password),
         )
@@ -337,13 +338,13 @@ def create_local_user(
       - 密码为空：(None, "密码不能为空")
     """
     if not username or not username.strip():
-        return None, "用户名不能为空"
+        return None, _("用户名不能为空")
     if not password:
-        return None, "密码不能为空"
+        return None, _("密码不能为空")
 
     existing = db.query(User).filter(User.username == username.strip()).first()
     if existing:
-        return None, f"用户名「{username.strip()}」已存在"
+        return None, _("用户名「{username}」已存在", username=username.strip())
 
     user = User(
         username=username.strip(),
@@ -376,7 +377,7 @@ def update_local_user(
     """
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        return None, "用户不存在"
+        return None, _("用户不存在")
 
     if display_name is not None:
         user.display_name = display_name.strip()

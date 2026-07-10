@@ -13,10 +13,29 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime
 
+from jinja2 import Environment, FileSystemLoader
+
 from .config import get_settings
+from .i18n import get_translator, DEFAULT_LOCALE
 from .models import ReviewTask
 
 logger = logging.getLogger(__name__)
+
+# 邮件模板引擎（独立于 HTTP 请求，使用默认中文 locale）
+_email_env = Environment(loader=FileSystemLoader("app/templates/email"))
+
+
+def _email_gettext(text: str, **kwargs) -> str:
+    """邮件翻译函数：默认使用中文，后续可扩展用户语言偏好。"""
+    translator = get_translator()
+    # 邮件默认 zh，待用户语言偏好字段就绪后可改为用户偏好
+    return translator.translate(text, "zh", **kwargs)
+
+
+def _render(template_name: str, **context) -> str:
+    """渲染邮件模板。"""
+    template = _email_env.get_template(template_name)
+    return template.render(_=_email_gettext, **context)
 
 
 def build_review_email(task: ReviewTask, reviewer_email: str, app_url: str) -> MIMEMultipart:
@@ -33,94 +52,21 @@ def build_review_email(task: ReviewTask, reviewer_email: str, app_url: str) -> M
     reject_url  = f"{base}/review/{task.token}?action=reject"
     detail_url  = f"{base}/review/{task.token}"
 
-    subject = f"【文件审批】{task.file_name} 待审核"
+    subject = _email_gettext("【文件审批】{file_name} 待审核", file_name=task.file_name)
 
-    html_body = f"""
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<style>
-  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-         background: #f5f5f5; margin: 0; padding: 20px; }}
-  .container {{ max-width: 600px; margin: 0 auto; background: white;
-                border-radius: 12px; overflow: hidden;
-                box-shadow: 0 2px 12px rgba(0,0,0,0.1); }}
-  .header {{ background: linear-gradient(135deg, #1a73e8, #0d47a1);
-             padding: 30px; text-align: center; color: white; }}
-  .header h1 {{ margin: 0; font-size: 22px; font-weight: 600; }}
-  .header p {{ margin: 8px 0 0; opacity: 0.85; font-size: 14px; }}
-  .body {{ padding: 30px; }}
-  .info-card {{ background: #f8f9fa; border-radius: 8px;
-                padding: 20px; margin-bottom: 24px;
-                border-left: 4px solid #1a73e8; }}
-  .info-row {{ display: flex; margin-bottom: 10px; font-size: 14px; }}
-  .info-label {{ color: #666; width: 90px; flex-shrink: 0; }}
-  .info-value {{ color: #222; font-weight: 500; word-break: break-all; }}
-  .actions {{ display: flex; gap: 12px; margin-top: 8px; }}
-  .btn {{ display: inline-block; padding: 12px 28px; border-radius: 8px;
-          text-decoration: none; font-size: 15px; font-weight: 600;
-          text-align: center; flex: 1; }}
-  .btn-approve {{ background: #34a853; color: white; }}
-  .btn-reject  {{ background: #ea4335; color: white; }}
-  .btn-detail  {{ background: #f1f3f4; color: #1a73e8; border: 1px solid #dadce0;
-                  display: block; text-align: center; margin-top: 12px; }}
-  .footer {{ background: #f8f9fa; padding: 18px 30px;
-             font-size: 12px; color: #999; text-align: center; }}
-  .expire-note {{ color: #e67e22; font-size: 13px; margin-top: 16px; }}
-</style>
-</head>
-<body>
-<div class="container">
-  <div class="header">
-    <h1>📄 文件审批通知</h1>
-    <p>内网文件上传，需要您审核后方可发布至外网</p>
-  </div>
-  <div class="body">
-    <div class="info-card">
-      <div class="info-row">
-        <span class="info-label">文件名</span>
-        <span class="info-value">📎 {task.file_name}</span>
-      </div>
-      <div class="info-row">
-        <span class="info-label">文件路径</span>
-        <span class="info-value">{task.file_path}</span>
-      </div>
-      <div class="info-row">
-        <span class="info-label">上传者</span>
-        <span class="info-value">{task.uploader}</span>
-      </div>
-      <div class="info-row">
-        <span class="info-label">上传时间</span>
-        <span class="info-value">{task.created_at.strftime('%Y-%m-%d %H:%M:%S')} UTC</span>
-      </div>
-      <div class="info-row">
-        <span class="info-label">任务编号</span>
-        <span class="info-value">#{task.id}</span>
-      </div>
-    </div>
+    expire_time = task.expire_at.strftime('%Y-%m-%d %H:%M') if task.expire_at else 'N/A'
 
-    <p style="color:#444; font-size:14px; margin-bottom:16px;">
-      请点击下方按钮进行审批，或进入详情页查看文件后再决定：
-    </p>
-
-    <div class="actions">
-      <a href="{approve_url}" class="btn btn-approve">✅ 快速通过</a>
-      <a href="{reject_url}"  class="btn btn-reject">❌ 快速拒绝</a>
-    </div>
-    <a href="{detail_url}" class="btn btn-detail">🔍 查看详情后审批</a>
-
-    <p class="expire-note">
-      ⏰ 此审批链接将于 {task.expire_at.strftime('%Y-%m-%d %H:%M') if task.expire_at else 'N/A'} UTC 过期
-    </p>
-  </div>
-  <div class="footer">
-    此邮件由 Seafile 文件审核系统自动发送，请勿回复。
-  </div>
-</div>
-</body>
-</html>
-"""
+    html_body = _render("review_notify.html",
+        file_name=task.file_name,
+        file_path=task.file_path,
+        uploader=task.uploader,
+        upload_time=task.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+        task_id=task.id,
+        approve_url=approve_url,
+        reject_url=reject_url,
+        detail_url=detail_url,
+        expire_time=expire_time,
+    )
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
@@ -202,22 +148,19 @@ async def send_result_notification(task: ReviewTask):
     settings = get_settings()
 
     status_text = (
-        "已通过并同步至外网"
+        _email_gettext("已通过并同步至外网")
         if task.status.value == "transferred"
-        else f"已被拒绝：{task.reviewer_comment}"
+        else _email_gettext("已被拒绝：{comment}", comment=task.reviewer_comment or "")
     )
-    subject = f"【文件审批结果】{task.file_name} - {status_text}"
+    subject = _email_gettext("【文件审批结果】{file_name} - {status}", file_name=task.file_name, status=status_text)
 
-    html_body = f"""
-<html><body style="font-family:sans-serif;padding:20px;">
-<h3>您上传的文件审批结果通知</h3>
-<p><b>文件名：</b>{task.file_name}</p>
-<p><b>审批结果：</b>{status_text}</p>
-<p><b>审批人：</b>{task.reviewed_by}</p>
-<p><b>审批时间：</b>{task.reviewed_at}</p>
-{"<p><b>外网路径：</b>" + task.extranet_file_path + "</p>" if task.extranet_file_path else ""}
-</body></html>
-"""
+    html_body = _render("result_notify.html",
+        file_name=task.file_name,
+        status_text=status_text,
+        reviewer_name=task.reviewed_by or "",
+        review_time=str(task.reviewed_at) if task.reviewed_at else "",
+        extranet_path=task.extranet_file_path or "",
+    )
     # 结果通知只用内网 SMTP（或回退的单 SMTP）发送一次
     smtp_configs = settings.active_smtp_configs
     if not smtp_configs:

@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{{ get_locale() }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}MFT 文件审核系统{% endblock %}</title>
+  <title>{% block title %}{{ _("MFT 文件审核系统") }}{% endblock %}</title>
   <style>
     :root {
       --primary: #1a73e8;
@@ -45,6 +45,15 @@
       transition: background .15s;
     }
     .header .btn-logout:hover { background: rgba(255,255,255,.15); }
+
+    /* ── 语言切换 */
+    .lang-switcher { display: flex; gap: 4px; }
+    .lang-switcher a {
+      color: rgba(255,255,255,.6); text-decoration: none; font-size: 12px;
+      padding: 2px 6px; border-radius: 4px; transition: all .15s;
+    }
+    .lang-switcher a:hover { color: white; background: rgba(255,255,255,.15); }
+    .lang-switcher a.active { color: white; background: rgba(255,255,255,.25); font-weight: 600; }
 
     /* ── 侧栏 */
     .sidebar {
@@ -188,17 +197,21 @@
 
 <!-- 顶部 Header -->
 <header class="header">
-  <a href="/dashboard" class="logo">📁 MFT 审核系统</a>
+  <a href="/dashboard" class="logo">{{ _("📁 MFT 审核系统") }}</a>
   <div class="spacer"></div>
   {% if user is defined and user %}
+  <div class="lang-switcher">
+    <a href="/lang/zh" class="{% if get_locale() == 'zh' %}active{% endif %}">中文</a>
+    <a href="/lang/en" class="{% if get_locale() == 'en' %}active{% endif %}">EN</a>
+  </div>
   <div class="user-info">
     <span>{{ user.username }}</span>
     <span class="role-badge">
-      {% if user.role.value == 'admin' %}管理员
-      {% elif user.role.value == 'reviewer' %}审核者
-      {% else %}提交者{% endif %}
+      {% if user.role.value == 'admin' %}{{ _("管理员") }}
+      {% elif user.role.value == 'reviewer' %}{{ _("审核者") }}
+      {% else %}{{ _("提交者") }}{% endif %}
     </span>
-    <a href="/logout" class="btn-logout">退出</a>
+    <a href="/logout" class="btn-logout">{{ _("退出") }}</a>
   </div>
   {% endif %}
 </header>
@@ -207,51 +220,51 @@
 {% if user is defined and user %}
 <nav class="sidebar">
   <div class="nav-group">
-    <div class="nav-label">概览</div>
+    <div class="nav-label">{{ _("概览") }}</div>
     <a href="/dashboard" class="nav-item {% if request.url.path == '/dashboard' %}active{% endif %}">
-      <span class="icon">🏠</span> 首页
+      <span class="icon">🏠</span> {{ _("首页") }}
     </a>
   </div>
 
   <div class="nav-group">
-    <div class="nav-label">我的文件</div>
+    <div class="nav-label">{{ _("我的文件") }}</div>
     <a href="/my/upload" class="nav-item {% if '/my/upload' in request.url.path %}active{% endif %}">
-      <span class="icon">⬆️</span> 上传文件
+      <span class="icon">⬆️</span> {{ _("上传文件") }}
     </a>
     <a href="/my/submissions" class="nav-item {% if '/my/submissions' in request.url.path %}active{% endif %}">
-      <span class="icon">📋</span> 我的申请
+      <span class="icon">📋</span> {{ _("我的申请") }}
     </a>
     <a href="/downloads" class="nav-item {% if '/downloads' in request.url.path %}active{% endif %}">
-      <span class="icon">⬇️</span> 下载文件
+      <span class="icon">⬇️</span> {{ _("下载文件") }}
     </a>
   </div>
 
   {% if user.is_reviewer %}
   <div class="nav-group">
-    <div class="nav-label">审核管理</div>
+    <div class="nav-label">{{ _("审核管理") }}</div>
     <a href="/review-board" class="nav-item {% if '/review-board' in request.url.path %}active{% endif %}">
-      <span class="icon">🔍</span> 待审核列表
+      <span class="icon">🔍</span> {{ _("待审核列表") }}
       {% if pending_count is defined and pending_count %}
       <span class="badge">{{ pending_count }}</span>
       {% endif %}
     </a>
     <a href="/review-board?status=transferred" class="nav-item">
-      <span class="icon">✅</span> 已通过记录
+      <span class="icon">✅</span> {{ _("已通过记录") }}
     </a>
     <a href="/review-board?status=" class="nav-item">
-      <span class="icon">📑</span> 全部记录
+      <span class="icon">📑</span> {{ _("全部记录") }}
     </a>
   </div>
   {% endif %}
 
   {% if user.is_admin %}
   <div class="nav-group">
-    <div class="nav-label">系统管理</div>
+    <div class="nav-label">{{ _("系统管理") }}</div>
     <a href="/admin/users" class="nav-item {% if '/admin/users' in request.url.path %}active{% endif %}">
-      <span class="icon">👥</span> 用户管理
+      <span class="icon">👥</span> {{ _("用户管理") }}
     </a>
     <a href="/admin/tasks" class="nav-item {% if '/admin/tasks' in request.url.path %}active{% endif %}">
-      <span class="icon">🗂️</span> 所有任务
+      <span class="icon">🗂️</span> {{ _("所有任务") }}
     </a>
   </div>
   {% endif %}
@@ -263,6 +276,20 @@
   {% block content %}{% endblock %}
 </main>
 
+<script>
+(function() {
+  var t = {
+    '已选择：': '{{ _("已选择：") }}',
+    '文件：': '{{ _("文件：") }}',
+    '⏳ 上传中，请稍候...': '{{ _("⏳ 上传中，请稍候...") }}',
+    '✅ 确认通过审批': '{{ _("✅ 确认通过审批") }}',
+    '✅ 确认通过': '{{ _("✅ 确认通过") }}',
+    '❌ 确认拒绝审批': '{{ _("❌ 确认拒绝审批") }}',
+    '❌ 确认拒绝': '{{ _("❌ 确认拒绝") }}'
+  };
+  window.__ = function(k) { return t[k] || k; };
+})();
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

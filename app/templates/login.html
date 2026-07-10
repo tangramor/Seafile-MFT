@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{{ get_locale() }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>登录 · MFT 文件审核系统</title>
+  <title>{{ _("登录 · MFT 文件审核系统") }}</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -51,28 +51,28 @@
 <div class="login-box">
   <div class="logo">
     <span class="icon">🔐</span>
-    <h1>MFT 文件审核系统</h1>
-    <p>请使用 LDAP 账号登录</p>
+    <h1>{{ _("MFT 文件审核系统") }}</h1>
+    <p>{{ _("请使用 LDAP 账号登录") }}</p>
   </div>
 
   {% if error %}
-  <div class="alert-error">⚠️ {{ error }}</div>
+  <div class="alert-error">⚠️ {{ _(error) if error else '' }}</div>
   {% endif %}
 
   <form method="post" action="/login">
     <input type="hidden" name="next" value="{{ next }}">
     <div class="form-group">
-      <label for="username">用户名</label>
-      <input id="username" name="username" type="text" placeholder="输入用户名" required autofocus autocomplete="username">
+      <label for="username">{{ _("用户名") }}</label>
+      <input id="username" name="username" type="text" placeholder="{{ _('输入用户名') }}" required autofocus autocomplete="username">
     </div>
     <div class="form-group">
-      <label for="password">密码</label>
-      <input id="password" name="password" type="password" placeholder="输入密码" required autocomplete="current-password">
+      <label for="password">{{ _("密码") }}</label>
+      <input id="password" name="password" type="password" placeholder="{{ _('输入密码') }}" required autocomplete="current-password">
     </div>
-    <button type="submit" class="btn-login">登 录</button>
+    <button type="submit" class="btn-login">{{ _("登 录") }}</button>
   </form>
 
-  <div class="footer">Seafile MFT &copy; 2024 · 内部系统，禁止外传</div>
+  <div class="footer">Seafile MFT &copy; 2024 · {{ _("内部系统，禁止外传") }}</div>
 </div>
 </body>
 </html>

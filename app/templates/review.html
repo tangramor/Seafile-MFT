@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{{ get_locale() }}">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>文件审批 - {{ task.file_name }}</title>
+<title>{{ _("文件审批") }} - {{ task.file_name }}</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -32,27 +32,27 @@
   <!-- 头部 -->
   <div class="text-center mb-8">
     <div class="text-5xl mb-3">📋</div>
-    <h1 class="text-3xl font-bold text-white">文件审批系统</h1>
-    <p class="text-purple-200 mt-2">内网 → 外网 Seafile 文件发布审核</p>
+    <h1 class="text-3xl font-bold text-white">{{ _("文件审批系统") }}</h1>
+    <p class="text-purple-200 mt-2">{{ _("内网 → 外网 Seafile 文件发布审核") }}</p>
   </div>
 
   <!-- 主卡片 -->
   <div class="glass rounded-2xl shadow-2xl overflow-hidden">
 
     <!-- 状态栏 -->
-    {% set status_info = status_labels.get(task.status.value, ("未知", "gray")) %}
+    {% set status_info = status_labels.get(task.status.value, (_("未知"), "gray")) %}
     <div class="px-8 py-4 border-b border-gray-100 flex items-center justify-between">
-      <span class="text-sm text-gray-500 font-medium">任务 #{{ task.id }}</span>
+      <span class="text-sm text-gray-500 font-medium">{{ _("任务") }} #{{ task.id }}</span>
       {% if task.status.value == 'pending' %}
-        <span class="px-3 py-1 bg-amber-100 text-amber-700 rounded-full text-sm font-semibold">⏳ 待审批</span>
+        <span class="px-3 py-1 bg-amber-100 text-amber-700 rounded-full text-sm font-semibold">{{ _("⏳ 待审批") }}</span>
       {% elif task.status.value == 'approved' %}
-        <span class="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-semibold">✅ 已通过</span>
+        <span class="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-semibold">{{ _("✅ 已通过") }}</span>
       {% elif task.status.value == 'rejected' %}
-        <span class="px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm font-semibold">❌ 已拒绝</span>
+        <span class="px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm font-semibold">{{ _("❌ 已拒绝") }}</span>
       {% elif task.status.value == 'transferred' %}
-        <span class="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-semibold">🚀 已同步外网</span>
+        <span class="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-semibold">{{ _("🚀 已同步外网") }}</span>
       {% elif task.status.value == 'failed' %}
-        <span class="px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm font-semibold">💥 同步失败</span>
+        <span class="px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm font-semibold">{{ _("💥 同步失败") }}</span>
       {% endif %}
     </div>
 
@@ -62,45 +62,45 @@
       {% if message_type == 'success' %}bg-green-50 text-green-800 border border-green-200
       {% elif message_type == 'danger' %}bg-red-50 text-red-800 border border-red-200
       {% else %}bg-amber-50 text-amber-800 border border-amber-200{% endif %}">
-      {{ message }}
+      {{ _(message) if message else '' }}
     </div>
     {% endif %}
 
     <!-- 文件信息 -->
     <div class="px-8 py-6">
-      <h2 class="text-lg font-semibold text-gray-800 mb-4">文件信息</h2>
+      <h2 class="text-lg font-semibold text-gray-800 mb-4">{{ _("文件信息") }}</h2>
       <div class="bg-gray-50 rounded-xl p-5 space-y-3">
         <div class="flex">
-          <span class="text-gray-500 text-sm w-24 shrink-0">文件名</span>
+          <span class="text-gray-500 text-sm w-24 shrink-0">{{ _("文件名") }}</span>
           <span class="text-gray-800 font-semibold text-sm break-all">📎 {{ task.file_name }}</span>
         </div>
         <div class="flex">
-          <span class="text-gray-500 text-sm w-24 shrink-0">文件路径</span>
+          <span class="text-gray-500 text-sm w-24 shrink-0">{{ _("文件路径") }}</span>
           <span class="text-gray-700 text-sm font-mono break-all">{{ task.file_path }}</span>
         </div>
         <div class="flex">
-          <span class="text-gray-500 text-sm w-24 shrink-0">上传者</span>
+          <span class="text-gray-500 text-sm w-24 shrink-0">{{ _("上传者") }}</span>
           <span class="text-gray-800 text-sm">{{ task.uploader }}</span>
         </div>
         <div class="flex">
-          <span class="text-gray-500 text-sm w-24 shrink-0">上传时间</span>
+          <span class="text-gray-500 text-sm w-24 shrink-0">{{ _("上传时间") }}</span>
           <span class="text-gray-800 text-sm">{{ task.created_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC</span>
         </div>
         {% if task.expire_at %}
         <div class="flex">
-          <span class="text-gray-500 text-sm w-24 shrink-0">链接过期</span>
+          <span class="text-gray-500 text-sm w-24 shrink-0">{{ _("链接过期") }}</span>
           <span class="text-amber-600 text-sm">{{ task.expire_at.strftime('%Y-%m-%d %H:%M') }} UTC</span>
         </div>
         {% endif %}
         {% if task.extranet_file_path %}
         <div class="flex">
-          <span class="text-gray-500 text-sm w-24 shrink-0">外网路径</span>
+          <span class="text-gray-500 text-sm w-24 shrink-0">{{ _("外网路径") }}</span>
           <span class="text-blue-600 text-sm font-mono break-all">{{ task.extranet_file_path }}</span>
         </div>
         {% endif %}
         {% if task.transfer_error %}
         <div class="flex">
-          <span class="text-gray-500 text-sm w-24 shrink-0">错误信息</span>
+          <span class="text-gray-500 text-sm w-24 shrink-0">{{ _("错误信息") }}</span>
           <span class="text-red-600 text-sm break-all">{{ task.transfer_error }}</span>
         </div>
         {% endif %}
@@ -110,56 +110,56 @@
     <!-- 审批操作区 -->
     {% if task.status.value == 'pending' %}
     <div class="px-8 pb-8">
-      <h2 class="text-lg font-semibold text-gray-800 mb-4">审批操作</h2>
+      <h2 class="text-lg font-semibold text-gray-800 mb-4">{{ _("审批操作") }}</h2>
 
       <!-- 快速操作提示 -->
       {% if quick_action %}
       <div class="mb-4 px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-700">
-        💡 您通过邮件链接进行<b>{{ '通过' if quick_action == 'approve' else '拒绝' }}</b>操作，请填写审批信息后提交。
+        💡 {{ _("您通过邮件链接进行") }}<b>{{ _("通过") if quick_action == 'approve' else _("拒绝") }}</b>{{ _("操作，请填写审批信息后提交。") }}
       </div>
       {% endif %}
 
       <!-- 通过表单 -->
       <form method="post" action="/review/{{ task.token }}/approve"
             class="mb-4 bg-green-50 border border-green-200 rounded-xl p-5">
-        <h3 class="font-semibold text-green-800 mb-3">✅ 通过审批</h3>
+        <h3 class="font-semibold text-green-800 mb-3">{{ _("✅ 通过审批") }}</h3>
         <div class="mb-3">
-          <label class="block text-sm text-gray-600 mb-1">审批人姓名</label>
+          <label class="block text-sm text-gray-600 mb-1">{{ _("审批人姓名") }}</label>
           <input type="text" name="reviewer_name" required
                  class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
-                 placeholder="请输入您的姓名">
+                 placeholder="{{ _('请输入您的姓名') }}">
         </div>
         <div class="mb-4">
-          <label class="block text-sm text-gray-600 mb-1">备注（可选）</label>
+          <label class="block text-sm text-gray-600 mb-1">{{ _("备注（可选）") }}</label>
           <textarea name="comment" rows="2"
                     class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
-                    placeholder="审批通过，文件符合发布规范..."></textarea>
+                    placeholder="{{ _('审批通过，文件符合发布规范...') }}"></textarea>
         </div>
         <button type="submit"
                 class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 rounded-xl transition-all duration-200 hover:shadow-lg">
-          ✅ 确认通过 → 同步至外网
+          {{ _("✅ 确认通过 → 同步至外网") }}
         </button>
       </form>
 
       <!-- 拒绝表单 -->
       <form method="post" action="/review/{{ task.token }}/reject"
             class="bg-red-50 border border-red-200 rounded-xl p-5">
-        <h3 class="font-semibold text-red-800 mb-3">❌ 拒绝审批</h3>
+        <h3 class="font-semibold text-red-800 mb-3">{{ _("❌ 拒绝审批") }}</h3>
         <div class="mb-3">
-          <label class="block text-sm text-gray-600 mb-1">审批人姓名</label>
+          <label class="block text-sm text-gray-600 mb-1">{{ _("审批人姓名") }}</label>
           <input type="text" name="reviewer_name" required
                  class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
-                 placeholder="请输入您的姓名">
+                 placeholder="{{ _('请输入您的姓名') }}">
         </div>
         <div class="mb-4">
-          <label class="block text-sm text-gray-600 mb-1">拒绝原因 <span class="text-red-500">*</span></label>
+          <label class="block text-sm text-gray-600 mb-1">{{ _("拒绝原因") }} <span class="text-red-500">*</span></label>
           <textarea name="comment" rows="2" required
                     class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
-                    placeholder="请说明拒绝原因，便于上传者修改..."></textarea>
+                    placeholder="{{ _('请说明拒绝原因，便于上传者修改...') }}"></textarea>
         </div>
         <button type="submit"
                 class="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-3 rounded-xl transition-all duration-200 hover:shadow-lg">
-          ❌ 确认拒绝
+          {{ _("❌ 确认拒绝") }}
         </button>
       </form>
     </div>
@@ -167,25 +167,25 @@
     <!-- 已审批：显示审批结果 -->
     {% else %}
     <div class="px-8 pb-8">
-      <h2 class="text-lg font-semibold text-gray-800 mb-4">审批记录</h2>
+      <h2 class="text-lg font-semibold text-gray-800 mb-4">{{ _("审批记录") }}</h2>
       <div class="bg-gray-50 rounded-xl p-5 space-y-3">
         <div class="flex">
-          <span class="text-gray-500 text-sm w-24 shrink-0">审批人</span>
+          <span class="text-gray-500 text-sm w-24 shrink-0">{{ _("审批人") }}</span>
           <span class="text-gray-800 text-sm">{{ task.reviewed_by or '-' }}</span>
         </div>
         <div class="flex">
-          <span class="text-gray-500 text-sm w-24 shrink-0">审批时间</span>
+          <span class="text-gray-500 text-sm w-24 shrink-0">{{ _("审批时间") }}</span>
           <span class="text-gray-800 text-sm">
             {{ task.reviewed_at.strftime('%Y-%m-%d %H:%M:%S') if task.reviewed_at else '-' }}
           </span>
         </div>
         <div class="flex">
-          <span class="text-gray-500 text-sm w-24 shrink-0">备注</span>
-          <span class="text-gray-800 text-sm">{{ task.reviewer_comment or '无' }}</span>
+          <span class="text-gray-500 text-sm w-24 shrink-0">{{ _("备注") }}</span>
+          <span class="text-gray-800 text-sm">{{ task.reviewer_comment or _("无") }}</span>
         </div>
         {% if task.status.value == 'transferred' and task.transferred_at %}
         <div class="flex">
-          <span class="text-gray-500 text-sm w-24 shrink-0">同步时间</span>
+          <span class="text-gray-500 text-sm w-24 shrink-0">{{ _("同步时间") }}</span>
           <span class="text-blue-600 text-sm">{{ task.transferred_at.strftime('%Y-%m-%d %H:%M:%S') }}</span>
         </div>
         {% endif %}
@@ -197,14 +197,14 @@
 
   <!-- 底部 -->
   <p class="text-center text-purple-200 text-xs mt-6">
-    Seafile 内外网文件审核同步系统 &nbsp;|&nbsp; <a href="/admin/tasks" class="underline">管理后台</a>
+    {{ _("Seafile 内外网文件审核同步系统") }} &nbsp;|&nbsp; <a href="/admin/tasks" class="underline">{{ _("管理后台") }}</a>
   </p>
 
 </div>
 
 {% if quick_action %}
 <script>
-  // 邮件快速链接：自动滚动到对应表单并高亮
+  /* i18n: TODO */ // 邮件快速链接：自动滚动到对应表单并高亮
   window.addEventListener('DOMContentLoaded', () => {
     const action = '{{ quick_action }}';
     const forms = document.querySelectorAll('form');

@@ -1,65 +1,65 @@
 {% extends "base.html" %}
-{% block title %}用户管理 · MFT 审核系统{% endblock %}
+{% block title %}{{ _("用户管理") }} · {{ _("MFT 审核系统") }}{% endblock %}
 
 {% block content %}
-<h2 style="font-size:20px;font-weight:700;margin-bottom:20px;">用户管理</h2>
+<h2 style="font-size:20px;font-weight:700;margin-bottom:20px;">{{ _("用户管理") }}</h2>
 
 {% if msg %}
 <div class="alert alert-{{ msg_type }}" style="margin-bottom:20px;">
-  {% if msg_type == 'success' %}✅ {% elif msg_type == 'danger' %}❌ {% endif %}{{ msg }}
+  {% if msg_type == 'success' %}✅ {% elif msg_type == 'danger' %}❌ {% endif %}{{ _(msg) if msg else '' }}
 </div>
 {% endif %}
 
 <div class="card" style="padding:24px;margin-bottom:24px;">
-  <div class="card-title">➕ 创建本地用户</div>
+  <div class="card-title">➕ {{ _("创建本地用户") }}</div>
   <p style="font-size:13px;color:#666;margin-bottom:18px;">
-    手动创建本地账号（密码登录），适用于未接入 LDAP 的用户。LDAP 用户首次登录会自动创建，无需在此添加。
+    {{ _("手动创建本地账号（密码登录），适用于未接入 LDAP 的用户。LDAP 用户首次登录会自动创建，无需在此添加。") }}
   </p>
   <form method="post" action="/admin/users/create">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px 20px;">
       <div class="form-group" style="margin:0;">
-        <label class="form-label">用户名 *</label>
+        <label class="form-label">{{ _("用户名") }} *</label>
         <input type="text" name="username" class="form-control" required
-               placeholder="登录用户名" autocomplete="off">
+               placeholder="{{ _('登录用户名') }}" autocomplete="off">
       </div>
       <div class="form-group" style="margin:0;">
-        <label class="form-label">显示名</label>
+        <label class="form-label">{{ _("显示名") }}</label>
         <input type="text" name="display_name" class="form-control"
-               placeholder="用户昵称（可选）" autocomplete="off">
+               placeholder="{{ _('用户昵称（可选）') }}" autocomplete="off">
       </div>
       <div class="form-group" style="margin:0;">
-        <label class="form-label">邮箱</label>
+        <label class="form-label">{{ _("邮箱") }}</label>
         <input type="email" name="email" class="form-control"
-               placeholder="user@example.com（可选）" autocomplete="off">
+               placeholder="{{ _('user@example.com（可选）') }}" autocomplete="off">
       </div>
       <div class="form-group" style="margin:0;">
-        <label class="form-label">角色</label>
+        <label class="form-label">{{ _("角色") }}</label>
         <select name="role" class="form-control" style="cursor:pointer;">
-          <option value="submitter">提交者</option>
-          <option value="reviewer">审核者</option>
-          <option value="admin">管理员</option>
+          <option value="submitter">{{ _("提交者") }}</option>
+          <option value="reviewer">{{ _("审核者") }}</option>
+          <option value="admin">{{ _("管理员") }}</option>
         </select>
       </div>
       <div class="form-group" style="margin:0;">
-        <label class="form-label">密码 *</label>
+        <label class="form-label">{{ _("密码") }} *</label>
         <input type="password" name="password" class="form-control" required
-               placeholder="设置登录密码" autocomplete="new-password">
+               placeholder="{{ _('设置登录密码') }}" autocomplete="new-password">
       </div>
       <div class="form-group" style="margin:0;">
-        <label class="form-label">确认密码 *</label>
+        <label class="form-label">{{ _("确认密码") }} *</label>
         <input type="password" name="confirm_password" class="form-control" required
-               placeholder="再次输入密码" autocomplete="new-password">
+               placeholder="{{ _('再次输入密码') }}" autocomplete="new-password">
       </div>
     </div>
     <div style="margin-top:18px;">
-      <button type="submit" class="btn btn-primary">创建用户</button>
+      <button type="submit" class="btn btn-primary">{{ _("创建用户") }}</button>
     </div>
   </form>
 </div>
 
 <div class="card" style="padding:0;">
   <div style="padding:18px 24px 0;">
-    <div class="card-title" style="margin-bottom:12px;">📋 用户列表</div>
+    <div class="card-title" style="margin-bottom:12px;">📋 {{ _("用户列表") }}</div>
   </div>
   {% if users %}
   <div class="table-wrap">
@@ -67,13 +67,13 @@
       <thead>
         <tr>
           <th>#</th>
-          <th>用户名</th>
-          <th>显示名</th>
-          <th>邮箱</th>
-          <th>角色</th>
-          <th>状态</th>
-          <th>最后登录</th>
-          <th>操作</th>
+          <th>{{ _("用户名") }}</th>
+          <th>{{ _("显示名") }}</th>
+          <th>{{ _("邮箱") }}</th>
+          <th>{{ _("角色") }}</th>
+          <th>{{ _("状态") }}</th>
+          <th>{{ _("最后登录") }}</th>
+          <th>{{ _("操作") }}</th>
         </tr>
       </thead>
       <tbody>
@@ -86,20 +86,20 @@
           <form method="post" action="/admin/users/{{ u.id }}/edit" id="edit-form-{{ u.id }}">
           <td>
             <input type="text" name="display_name" class="form-control"
-                   value="{{ u.display_name or '' }}" placeholder="显示名"
+                   value="{{ u.display_name or '' }}" placeholder="{{ _('显示名') }}"
                    style="padding:4px 8px;font-size:13px;width:120px;">
           </td>
           <td>
             <input type="email" name="email" class="form-control"
-                   value="{{ u.email or '' }}" placeholder="邮箱"
+                   value="{{ u.email or '' }}" placeholder="{{ _('邮箱') }}"
                    style="padding:4px 8px;font-size:13px;width:180px;">
           </td>
           <td>
             <select name="role"
               style="padding:4px 8px;border-radius:6px;border:1px solid #dadce0;font-size:13px;cursor:pointer;background:#fff;">
-              <option value="submitter" {% if u.role.value=='submitter' %}selected{% endif %}>提交者</option>
-              <option value="reviewer"  {% if u.role.value=='reviewer'  %}selected{% endif %}>审核者</option>
-              <option value="admin"     {% if u.role.value=='admin'     %}selected{% endif %}>管理员</option>
+              <option value="submitter" {% if u.role.value=='submitter' %}selected{% endif %}>{{ _("提交者") }}</option>
+              <option value="reviewer"  {% if u.role.value=='reviewer'  %}selected{% endif %}>{{ _("审核者") }}</option>
+              <option value="admin"     {% if u.role.value=='admin'     %}selected{% endif %}>{{ _("管理员") }}</option>
             </select>
           </td>
           </form>
@@ -110,38 +110,38 @@
             <form method="post" action="/admin/users/{{ u.id }}/role" style="display:inline;">
               <select name="role" onchange="this.form.submit()"
                 style="padding:4px 8px;border-radius:6px;border:1px solid #dadce0;font-size:13px;cursor:pointer;">
-                <option value="submitter" {% if u.role.value=='submitter' %}selected{% endif %}>提交者</option>
-                <option value="reviewer"  {% if u.role.value=='reviewer'  %}selected{% endif %}>审核者</option>
-                <option value="admin"     {% if u.role.value=='admin'     %}selected{% endif %}>管理员</option>
+                <option value="submitter" {% if u.role.value=='submitter' %}selected{% endif %}>{{ _("提交者") }}</option>
+                <option value="reviewer"  {% if u.role.value=='reviewer'  %}selected{% endif %}>{{ _("审核者") }}</option>
+                <option value="admin"     {% if u.role.value=='admin'     %}selected{% endif %}>{{ _("管理员") }}</option>
               </select>
             </form>
           </td>
           {% endif %}
           <td>
             {% if u.is_active %}
-            <span class="badge badge-success">启用</span>
+            <span class="badge badge-success">{{ _("启用") }}</span>
             {% else %}
-            <span class="badge badge-danger">禁用</span>
+            <span class="badge badge-danger">{{ _("禁用") }}</span>
             {% endif %}
           </td>
           <td style="font-size:12px;color:#666;white-space:nowrap;">
-            {% if u.last_login %}{{ u.last_login.strftime('%m-%d %H:%M') }}{% else %}从未{% endif %}
+            {% if u.last_login %}{{ u.last_login.strftime('%m-%d %H:%M') }}{% else %}{{ _("从未") }}{% endif %}
           </td>
           <td style="white-space:nowrap;">
             {% if is_edit %}
-            <button type="submit" form="edit-form-{{ u.id }}" class="btn btn-sm btn-primary">💾 保存</button>
-            <a href="/admin/users" class="btn btn-sm" style="background:#e0e0e0;color:#333;text-decoration:none;">取消</a>
+            <button type="submit" form="edit-form-{{ u.id }}" class="btn btn-sm btn-primary">💾 {{ _("保存") }}</button>
+            <a href="/admin/users" class="btn btn-sm" style="background:#e0e0e0;color:#333;text-decoration:none;">{{ _("取消") }}</a>
             {% else %}
             {% if u.username != user.username %}
-            <a href="/admin/users?edit={{ u.id }}" class="btn btn-sm" style="background:#e8f0fe;color:#1967d2;text-decoration:none;margin-right:4px;">✏️ 编辑</a>
+            <a href="/admin/users?edit={{ u.id }}" class="btn btn-sm" style="background:#e8f0fe;color:#1967d2;text-decoration:none;margin-right:4px;">✏️ {{ _("编辑") }}</a>
             <form method="post" action="/admin/users/{{ u.id }}/toggle" style="display:inline;">
               <button type="submit" class="btn btn-sm {% if u.is_active %}btn-warning{% else %}btn-success{% endif %}">
-                {% if u.is_active %}禁用{% else %}启用{% endif %}
+                {% if u.is_active %}{{ _("禁用") }}{% else %}{{ _("启用") }}{% endif %}
               </button>
             </form>
             {% else %}
-            <a href="/admin/users?edit={{ u.id }}" class="btn btn-sm" style="background:#e8f0fe;color:#1967d2;text-decoration:none;margin-right:4px;">✏️ 编辑</a>
-            <span style="font-size:12px;color:#aaa;">（当前账号）</span>
+            <a href="/admin/users?edit={{ u.id }}" class="btn btn-sm" style="background:#e8f0fe;color:#1967d2;text-decoration:none;margin-right:4px;">✏️ {{ _("编辑") }}</a>
+            <span style="font-size:12px;color:#aaa;">{{ _("（当前账号）") }}</span>
             {% endif %}
             {% endif %}
           </td>
@@ -152,7 +152,7 @@
   </div>
   {% else %}
   <div style="text-align:center;padding:60px;color:#aaa;">
-    <p>暂无用户，请通过 LDAP 登录或在上方创建本地账号。</p>
+    <p>{{ _("暂无用户，请通过 LDAP 登录或在上方创建本地账号。") }}</p>
   </div>
   {% endif %}
 </div>

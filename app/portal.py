@@ -40,12 +40,15 @@ from .auth import (
 )
 from .config import get_settings
 from .email_notify import send_review_notification, send_result_notification
+from .i18n import _, get_locale
 from .models import ReviewStatus, ReviewTask, User, UserRole, get_db
 from .transfer import SeafileClient, transfer_file_to_extranet
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
+templates.env.globals["_"] = _
+templates.env.globals["get_locale"] = get_locale
 
 STATUS_LABELS = {
     "pending":     ("待审批",   "warning"),
@@ -88,13 +91,13 @@ async def login_submit(
         if not user:
             return templates.TemplateResponse(
                 "login.html",
-                {"request": request, "next": next, "error": "用户名或密码错误"},
+                {"request": request, "next": next, "error": _("用户名或密码错误")},
                 status_code=401,
             )
         if not user.is_active:
             return templates.TemplateResponse(
                 "login.html",
-                {"request": request, "next": next, "error": "账号已被禁用"},
+                {"request": request, "next": next, "error": _("账号已被禁用")},
                 status_code=403,
             )
         session_id = create_session(user, db)
@@ -253,7 +256,7 @@ async def upload_submit(
             {
                 "request": request,
                 "user": current_user,
-                "message": f"上传失败：{e}",
+                "message": _("上传失败：{error}", error=str(e)),
                 "msg_type": "danger",
             },
         )
@@ -291,7 +294,7 @@ async def upload_submit(
         {
             "request": request,
             "user": current_user,
-            "message": f"✅ 文件已上传，审核申请 #{task_id} 已提交，审核完成后将通知您。",
+            "message": _("✅ 文件已上传，审核申请 #{task_id} 已提交，审核完成后将通知您。", task_id=task_id),
             "msg_type": "success",
         },
     )
@@ -346,9 +349,9 @@ async def board_approve(
     with get_db() as db:
         task = db.query(ReviewTask).filter(ReviewTask.id == task_id).first()
         if not task:
-            raise HTTPException(status_code=404, detail="任务不存在")
+            raise HTTPException(status_code=404, detail=_("任务不存在"))
         if task.status != ReviewStatus.PENDING:
-            raise HTTPException(status_code=400, detail="任务已处理")
+            raise HTTPException(status_code=400, detail=_("任务已处理"))
 
         task.status = ReviewStatus.APPROVED
         task.reviewed_by = current_user.username
@@ -375,9 +378,9 @@ async def board_reject(
     with get_db() as db:
         task = db.query(ReviewTask).filter(ReviewTask.id == task_id).first()
         if not task:
-            raise HTTPException(status_code=404, detail="任务不存在")
+            raise HTTPException(status_code=404, detail=_("任务不存在"))
         if task.status != ReviewStatus.PENDING:
-            raise HTTPException(status_code=400, detail="任务已处理")
+            raise HTTPException(status_code=400, detail=_("任务已处理"))
 
         task.status = ReviewStatus.REJECTED
         task.reviewed_by = current_user.username
@@ -443,10 +446,10 @@ async def download_file(
     with get_db() as db:
         task = db.query(ReviewTask).filter(ReviewTask.id == task_id).first()
         if not task or task.status != ReviewStatus.TRANSFERRED:
-            raise HTTPException(status_code=404, detail="文件不存在或尚未通过审批")
+            raise HTTPException(status_code=404, detail=_("文件不存在或尚未通过审批"))
         # 提交者只能下载自己的文件
         if not current_user.is_reviewer and task.uploader != current_user.username:
-            raise HTTPException(status_code=403, detail="无权下载此文件")
+            raise HTTPException(status_code=403, detail=_("无权下载此文件"))
         file_path = task.extranet_file_path
         file_name = task.file_name
         repo_id_to_use = task.repo_id  # 保存一份，会话关闭后仍可用
@@ -456,7 +459,7 @@ async def download_file(
     try:
         content = await client.download_file(settings.extranet_repo_id, file_path)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"从外网 Seafile 下载失败：{e}")
+        raise HTTPException(status_code=502, detail=_("从外网 Seafile 下载失败：{error}", error=str(e)))
 
     import urllib.parse
     encoded_name = urllib.parse.quote(file_name)
@@ -510,7 +513,7 @@ async def admin_create_user(
     """管理员创建本地用户"""
     if password != confirm_password:
         return RedirectResponse(
-            "/admin/users?msg=两次输入的密码不一致&msg_type=danger",
+            "/admin/users?msg=" + _("两次输入的密码不一致") + "&msg_type=danger",
             status_code=302,
         )
 
@@ -518,7 +521,7 @@ async def admin_create_user(
         role_enum = UserRole(role)
     except ValueError:
         return RedirectResponse(
-            "/admin/users?msg=无效的角色选择&msg_type=danger",
+            "/admin/users?msg=" + _("无效的角色选择") + "&msg_type=danger",
             status_code=302,
         )
 
@@ -534,12 +537,12 @@ async def admin_create_user(
 
     if error:
         return RedirectResponse(
-            f"/admin/users?msg={error}&msg_type=danger",
+            "/admin/users?msg=" + error + "&msg_type=danger",
             status_code=302,
         )
 
     return RedirectResponse(
-        f"/admin/users?msg=用户「{username}」创建成功&msg_type=success",
+        "/admin/users?msg=" + _("用户「{username}」创建成功", username=username) + "&msg_type=success",
         status_code=302,
     )
 
@@ -553,11 +556,11 @@ async def admin_change_role(
     with get_db() as db:
         u = db.query(User).filter(User.id == user_id).first()
         if not u:
-            raise HTTPException(status_code=404, detail="用户不存在")
+            raise HTTPException(status_code=404, detail=_("用户不存在"))
         try:
             u.role = UserRole(role)
         except ValueError:
-            raise HTTPException(status_code=400, detail="无效角色")
+            raise HTTPException(status_code=400, detail=_("无效角色"))
         db.commit()
     return RedirectResponse("/admin/users", status_code=302)
 
@@ -570,7 +573,7 @@ async def admin_toggle_user(
     with get_db() as db:
         u = db.query(User).filter(User.id == user_id).first()
         if not u:
-            raise HTTPException(status_code=404, detail="用户不存在")
+            raise HTTPException(status_code=404, detail=_("用户不存在"))
         u.is_active = not u.is_active
         db.commit()
     return RedirectResponse("/admin/users", status_code=302)
@@ -590,7 +593,7 @@ async def admin_edit_user(
         role_enum = UserRole(role) if role else None
     except ValueError:
         return RedirectResponse(
-            "/admin/users?msg=无效的角色选择&msg_type=danger",
+            "/admin/users?msg=" + _("无效的角色选择") + "&msg_type=danger",
             status_code=302,
         )
 
@@ -604,14 +607,30 @@ async def admin_edit_user(
 
     if error:
         return RedirectResponse(
-            f"/admin/users?msg={error}&msg_type=danger",
+            "/admin/users?msg=" + error + "&msg_type=danger",
             status_code=302,
         )
 
     return RedirectResponse(
-        f"/admin/users?msg=用户「{user.username}」已更新&msg_type=success",
+        "/admin/users?msg=" + _("用户「{username}」已更新", username=user.username) + "&msg_type=success",
         status_code=302,
     )
+
+
+# ─────────────────────────────────────────────
+# 语言切换
+# ─────────────────────────────────────────────
+
+@router.get("/lang/{locale}")
+async def set_language(locale: str, request: Request):
+    """切换界面语言，设置 Cookie 后重定向回来源页。"""
+    from .i18n import SUPPORTED_LOCALES
+    if locale not in SUPPORTED_LOCALES:
+        locale = "zh"
+    referer = request.headers.get("referer", "/dashboard")
+    response = RedirectResponse(url=referer, status_code=303)
+    response.set_cookie("lang", locale, max_age=365 * 24 * 3600, httponly=True)
+    return response
 
 
 # ─────────────────────────────────────────────

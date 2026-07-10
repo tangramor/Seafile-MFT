@@ -14,6 +14,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse, JSONResponse
 
 from .config import get_settings
+from .i18n import _
+from .i18n.middleware import I18nMiddleware
 from .models import create_tables, init_engine
 from .review import router as review_router
 from .portal import router as portal_router
@@ -115,6 +117,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# 注册 i18n 中间件（语言检测）
+app.add_middleware(I18nMiddleware)
+
 # 注册路由
 app.include_router(portal_router)   # 登录、Dashboard、上传、审核看板、下载、用户管理
 app.include_router(review_router)   # 邮件 token 审批链接
@@ -147,12 +152,12 @@ async def trigger_poll_now():
             status_code=400,
             content={
                 "status": "error",
-                "message": f"当前为 {_active_detection_mode} 模式，无需手动触发轮询",
+                "message": _("当前为 {mode} 模式，无需手动触发轮询", mode=_active_detection_mode),
             }
         )
     from .poller import poll_once
     asyncio.create_task(poll_once())
-    return {"status": "triggered", "message": "轮询任务已在后台启动"}
+    return {"status": "triggered", "message": _("轮询任务已在后台启动")}
 
 
 @app.get("/admin/detection-mode")
