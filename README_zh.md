@@ -63,6 +63,11 @@ uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 
 ![Main Page](./images/Seafile-MFT-zh-01.png)
 
+### 4. 本地测试
+
+[本地测试说明](./test/README_zh.md)。
+
+
 ## 配置说明
 
 ### 完整配置项

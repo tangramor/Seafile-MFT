@@ -65,6 +65,11 @@ uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 
 ![Main Page](./images/Seafile-MFT-en-01.png)
 
+### 4. Local Testing
+
+[Local Testing](./test/README.md)。
+
+
 ## Configuration Reference
 
 ### All Configuration Items
