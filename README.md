@@ -31,7 +31,7 @@
 
 | 特性 | 说明 |
 |------|------|
-| 🔍 **智能文件检测** | 自动识别 Seafile 版本，>= 7.0 走 Webhook，< 7.0 走轮询（目录遍历 + mtime 对比），可手动指定模式 |
+| 🔍 **智能文件检测** | 自动识别 Seafile 版本和版本类型（社区版/专业版），专业版 >= 7.0 走 Webhook 实时检测，社区版或旧版走轮询（目录遍历 + mtime 对比），可手动指定模式 |
 | 🔐 **LDAP 认证** | 支持 LDAP 登录，按 AD 组映射角色（admin / reviewer / submitter） |
 | 👥 **本地账号** | 内置本地用户管理，管理员可创建、编辑、禁用/启用用户，分配角色 |
 | 👤 **角色权限** | 提交者（上传 + 查看自己的申请）、审核者（审核所有申请）、管理员（审核 + 用户管理） |
@@ -140,25 +140,85 @@ https://seafile.example.com/library/550e8400-e29b-41d4-a716-446655440000/
 
 系统支持两种文件检测方式，通过 `DETECTION_MODE` 环境变量控制：
 
-| 模式 | 说明 | 适用版本 |
+| 模式 | 说明 | 适用条件 |
 |------|------|----------|
-| `auto` | 启动时自动查询 Seafile `/api2/server-info/` 版本，>= 7.0 走 Webhook，否则走轮询 | **推荐** |
-| `webhook` | 强制使用 Webhook 实时触发 | Seafile >= 7.0 |
-| `poll` | 强制使用定时轮询 | Seafile 6.x / 7.x |
+| `auto` | 启动时自动查询 Seafile `/api2/server-info/`，根据版本+版本类型自动选择 | **推荐** |
+| `webhook` | 强制使用 Webhook 实时触发 | Seafile **专业版** >= 7.0 |
+| `poll` | 强制使用定时轮询 | 所有版本（含社区版） |
 
-### Webhook 模式（Seafile >= 7.0）
+### ⚠️ Webhook 版本限制（重要）
 
-在 Seafile 后台 → 系统管理 → Webhook 中添加：
+**Webhook 是 Seafile 专业版（Pro Edition）的独占功能**，社区版（Community Edition）不包含此功能。
+
+| Seafile 版本 | `features` 字段 | Webhook API | 支持的检测模式 |
+|-------------|-----------------|-------------|---------------|
+| 社区版（任意版本） | `["seafile-basic"]` | ❌ 返回 404 | 仅轮询 |
+| 专业版 >= 7.0 | 包含 `"seafile-pro"` | ✅ 可用 | Webhook 或轮询 |
+| 专业版 < 7.0 | 包含 `"seafile-pro"` | ⚠️ 支持有限 | 建议轮询 |
+
+**如何判断当前 Seafile 是否支持 Webhook：**
+
+```bash
+# 查询 server-info
+curl -s http://<seafile-url>/api2/server-info/ | python3 -m json.tool
+
+# 检查 features 字段
+# 包含 "seafile-pro"  → 专业版，支持 Webhook
+# 仅含 "seafile-basic" → 社区版，不支持 Webhook
 ```
-http://<服务器IP>:8081/webhook/seafile
+
+**`auto` 模式自动选择逻辑：**
+- 专业版 + 版本 >= 7.0 → Webhook 模式（实时）
+- 社区版（任意版本） → 轮询模式
+- 专业版 + 版本 < 7.0 → 轮询模式
+- 无法查询版本信息 → 轮询模式（安全降级）
+
+> **如果手动指定 `webhook` 但实际为社区版**，MFT 启动时会打印警告日志，但不会阻止启动。此时 Webhook 端点虽存在但永远不会收到事件，需改用 `poll` 或 `auto`。
+
+### Webhook 模式配置（专业版 >= 7.0）
+
+**前提条件：Seafile 必须是专业版（Pro Edition）。**
+
+在 Seafile 后台 → 系统管理 → Webhook 中添加回调地址：
+```
+http://<MFT服务器IP>:8081/webhook/seafile
 ```
 并设置与 `WEBHOOK_SECRET` 相同的签名密钥，实现 HMAC-SHA256 签名验证。
 
-### 轮询模式（兼容 Seafile 6.x）
+> 也可以通过 API 注册 Webhook：
+> ```bash
+> curl -X POST "http://<seafile-url>/api/v2.1/repos/<repo_id>/webhooks/" \
+>   -H "Authorization: Token <token>" \
+>   -H "Content-Type: application/json" \
+>   -d '{"url":"http://<mft-ip>:8081/webhook/seafile","secret":"<WEBHOOK_SECRET>"}'
+> ```
+
+**Webhook payload 示例（Seafile 专业版发送）：**
+```json
+{
+    "event": "repo-update",
+    "repo_id": "xxx",
+    "operator": "user@example.com",
+    "commit_id": "xxx",
+    "changed_files": {
+        "added": ["/path/to/new_file.pdf"],
+        "modified": ["/path/to/updated.txt"],
+        "deleted": []
+    }
+}
+```
+
+### 轮询模式（所有版本兼容）
 
 系统每 `POLL_INTERVAL_SECONDS` 秒遍历内网文件库目录，通过比较文件 `mtime` 时间戳来检测新增/修改的文件。
 
-> **原理**：Seafile 6.x 的部分 commit diff API 返回 404，因此采用目录遍历 + mtime 对比方案。该方案对所有 API 都返回 404 的旧版本 Seafile 完全可用。
+**轮询工作原理：**
+1. 拉取最新 commit 列表（`GET /api2/repos/{id}/history/`），找到比上次处理的 `commit_id` 更新的提交
+2. 遍历仓库所有文件（递归 `GET /api2/repos/{id}/dir/`），找出 `mtime` 在新 commit 时间之后的文件
+3. 为每个新增/修改文件创建审核任务
+4. 通过 `PollerState` 表持久化处理进度，重启后不会重复处理
+
+> **为什么选择目录遍历而非 commit diff？** Seafile 6.x 的 `GET /api2/repos/{id}/commits/{commit_id}/` 和 `GET /api2/repos/{id}/history/{commit_id}/` 均返回 404，无法获取单个 commit 的文件变更。目录遍历 + mtime 对比是兼容所有版本的最可靠方案。
 
 ## 用户角色与权限
 
