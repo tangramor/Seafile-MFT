@@ -185,6 +185,67 @@
     .filter-tabs a:hover { border-color: var(--primary); color: var(--primary); }
     .filter-tabs a.active { background: var(--primary); color: white; border-color: var(--primary); }
 
+    /* ── 审核备注悬浮提示（fixed 定位，不受表格裁剪） */
+    .comment-tip-wrap {
+      display: inline-block;
+      cursor: default;
+      vertical-align: middle;
+    }
+    .comment-tip-icon {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 20px; height: 20px; border-radius: 50%;
+      background: #e8f0fe; color: var(--primary);
+      font-size: 11px; margin-left: 4px;
+      transition: background .15s, transform .15s;
+      user-select: none;
+    }
+    .comment-tip-wrap:hover .comment-tip-icon {
+      background: var(--primary); color: white;
+      transform: scale(1.1);
+    }
+    .comment-tip-box {
+      position: fixed;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      box-shadow: 0 4px 16px rgba(0,0,0,.14);
+      font-size: 12px; color: var(--text);
+      line-height: 1.45;
+      white-space: pre-wrap; word-break: break-word;
+      max-width: 280px; min-width: 160px;
+      opacity: 0; visibility: hidden;
+      transition: opacity .15s, visibility .15s;
+      z-index: 99999;
+      pointer-events: none;
+      text-align: left;
+    }
+    .comment-tip-box.show {
+      opacity: 1; visibility: visible;
+    }
+    .comment-tip-box.above::after {
+      content: '';
+      position: absolute; top: 100%; left: 50%;
+      transform: translateX(-50%);
+      border: 6px solid transparent;
+      border-top-color: #fff;
+      filter: drop-shadow(0 1px 1px rgba(0,0,0,.08));
+    }
+    .comment-tip-box.below::after {
+      content: '';
+      position: absolute; bottom: 100%; left: 50%;
+      transform: translateX(-50%);
+      border: 6px solid transparent;
+      border-bottom-color: #fff;
+      filter: drop-shadow(0 -1px 1px rgba(0,0,0,.08));
+    }
+    .comment-tip-text { color: var(--text); margin-bottom: 0; }
+    .comment-tip-meta {
+      margin-top: 4px; padding-top: 4px;
+      border-top: 1px solid #f1f3f4;
+      font-size: 11px; color: var(--muted);
+    }
+
     /* ── 响应式 */
     @media (max-width: 768px) {
       .sidebar { display: none; }
@@ -295,6 +356,41 @@
     '❌ 确认拒绝': '{{ _("❌ 确认拒绝") }}'
   };
   window.__ = function(k) { return t[k] || k; };
+
+  /* ── 备注 tooltip fixed 定位 ── */
+  document.addEventListener('mouseover', function(e) {
+    var wrap = e.target.closest('.comment-tip-wrap');
+    if (!wrap) return;
+    var box = wrap.querySelector('.comment-tip-box');
+    if (!box) return;
+
+    var iconRect = wrap.getBoundingClientRect();
+    var gap = 6;
+    var boxH = box.offsetHeight;
+    var boxW = box.offsetWidth;
+    var left = iconRect.left + iconRect.width / 2 - boxW / 2;
+
+    /* 保持不出屏幕左右边界 */
+    if (left < 8) left = 8;
+    if (left + boxW > window.innerWidth - 8) left = window.innerWidth - boxW - 8;
+
+    /* 上方空间够则放上面，否则放下面 */
+    if (iconRect.top - boxH - gap > 0) {
+      box.style.top = (iconRect.top - boxH - gap) + 'px';
+      box.className = box.className.replace(/\b(below|above)\b/g, '') + ' above show';
+    } else {
+      box.style.top = (iconRect.bottom + gap) + 'px';
+      box.className = box.className.replace(/\b(below|above)\b/g, '') + ' below show';
+    }
+    box.style.left = left + 'px';
+  });
+
+  document.addEventListener('mouseout', function(e) {
+    var wrap = e.target.closest('.comment-tip-wrap');
+    if (!wrap) return;
+    var box = wrap.querySelector('.comment-tip-box');
+    if (box) box.className = box.className.replace(/\bshow\b/g, '').trim();
+  });
 })();
 </script>
 {% block scripts %}{% endblock %}

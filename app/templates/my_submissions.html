@@ -53,7 +53,20 @@
               {{ task.file_size }} B
             {% endif %}
           </td>
-          <td><span class="badge badge-{{ color }}">{{ _(label) }}</span></td>
+          <td>
+            <span class="badge badge-{{ color }}">{{ _(label) }}</span>
+            {% if task.reviewer_comment %}
+            <span class="comment-tip-wrap">
+              <span class="comment-tip-icon">💬</span>
+              <span class="comment-tip-box">
+                <div class="comment-tip-text">{{ task.reviewer_comment }}</div>
+                {% if task.reviewed_by or task.reviewed_at %}
+                <div class="comment-tip-meta">— {{ task.reviewed_by or '' }}{% if task.reviewed_at %} · {{ task.reviewed_at.strftime('%m-%d %H:%M') }}{% endif %}</div>
+                {% endif %}
+              </span>
+            </span>
+            {% endif %}
+          </td>
           <td style="color:#999;font-size:12px;">{{ task.source or 'poller' }}</td>
           <td style="color:#666;font-size:12px;white-space:nowrap;">
             {{ task.created_at.strftime('%m-%d %H:%M') }}
@@ -67,9 +80,7 @@
             {% elif task.status.value == 'pending' %}
             <span style="color:#aaa;font-size:12px;">{{ _("等待中") }}</span>
             {% elif task.status.value == 'rejected' %}
-            <span style="color:#ea4335;font-size:12px;" title="{{ task.reviewer_comment }}">
-              {{ _("已拒绝") }}
-            </span>
+            <span style="color:#ea4335;font-size:12px;">{{ _("已拒绝") }}</span>
             {% endif %}
           </td>
         </tr>

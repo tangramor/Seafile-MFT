@@ -17,7 +17,7 @@ from jinja2 import Environment, FileSystemLoader
 
 from .config import get_settings
 from .i18n import get_translator, DEFAULT_LOCALE
-from .models import ReviewTask
+from .models import ReviewTask, User, get_db
 
 logger = logging.getLogger(__name__)
 
@@ -119,8 +119,23 @@ async def send_review_notification(task: ReviewTask):
     若只配置了单 SMTP，则只发一封（向下兼容）。
     """
     settings = get_settings()
-    if not settings.reviewer_email_list:
-        logger.warning("[Email] 未配置审批人邮箱，跳过通知发送")
+
+    # 收集审批人邮箱：.env 配置 + 数据库中 reviewer/admin 角色的活跃用户
+    reviewer_emails = set(settings.reviewer_email_list)
+
+    with get_db() as db:
+        db_reviewers = db.query(User).filter(
+            User.role.in_(["reviewer", "admin"]),
+            User.is_active == True,
+            User.email != "",
+            User.email.isnot(None),
+        ).all()
+        for u in db_reviewers:
+            reviewer_emails.add(u.email)
+            logger.debug(f"[Email] 已添加数据库审核者邮箱: {u.email} ({u.username})")
+
+    if not reviewer_emails:
+        logger.warning("[Email] 未配置审批人邮箱且无审核者用户，跳过通知发送")
         return
 
     smtp_configs = settings.active_smtp_configs
@@ -128,12 +143,15 @@ async def send_review_notification(task: ReviewTask):
         logger.warning("[Email] 未找到任何有效的 SMTP 配置，跳过通知发送")
         return
 
+    reviewer_email_list = list(reviewer_emails)
+    logger.info(f"[Email] 审批人邮箱汇总: {reviewer_email_list}")
+
     import asyncio
     loop = asyncio.get_event_loop()
 
     for cfg in smtp_configs:
         await loop.run_in_executor(
-            None, _send_via_smtp, cfg, task, settings.reviewer_email_list
+            None, _send_via_smtp, cfg, task, reviewer_email_list
         )
 
 
