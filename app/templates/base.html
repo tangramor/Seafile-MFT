@@ -322,6 +322,9 @@
     <a href="/review-board?status=" class="nav-item">
       <span class="icon">📑</span> {{ _("全部记录") }}
     </a>
+    <a href="/admin/audit-log" class="nav-item {% if '/audit-log' in request.url.path %}active{% endif %}">
+      <span class="icon">📜</span> {{ _("审计日志") }}
+    </a>
   </div>
   {% endif %}
 

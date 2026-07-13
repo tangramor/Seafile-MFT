@@ -291,11 +291,14 @@ docker compose logs seafile-mft 2>&1 | grep -i "upload" | tail -5
 | Action | submitter | reviewer | admin |
 |--------|-----------|----------|-------|
 | Upload file | ✅ | ✅ | ✅ |
+| Change own password | ✅ | ✅ | ✅ |
 | View own submissions | ✅ | ✅ | ✅ |
 | View all submissions | ❌ | ✅ | ✅ |
 | Review tasks (approve/reject) | ❌ | ✅ | ✅ |
+| View audit log | ❌ | ✅ | ✅ |
 | Download synced files | ✅ (own only) | ✅ (all) | ✅ (all) |
 | User management | ❌ | ❌ | ✅ |
+| Reset user password / Delete user | ❌ | ❌ | ✅ |
 | Manually trigger polling | ❌ | ❌ | ✅ |
 
 **Verification points**:
@@ -305,9 +308,9 @@ docker compose logs seafile-mft 2>&1 | grep -i "upload" | tail -5
 
 ---
 
-### Test 6: User Editing
+### Test 6: User Management — Edit, Reset Password, Delete
 
-**Objective**: Admin can edit a user's display name, email, and role.
+**Objective**: Admin can edit a user's display name, email, and role, as well as reset passwords and delete local users.
 
 **Steps**:
 
@@ -318,10 +321,25 @@ docker compose logs seafile-mft 2>&1 | grep -i "upload" | tail -5
 5. Confirm updated info appears correctly in the list
 6. Have that user log in again, confirm role permissions are updated
 
+**Reset Password Test**:
+
+7. Click "🔑 Reset Password" for a user
+8. Enter a new password and confirm
+9. Have that user log in with the new password
+
+**Delete User Test**:
+
+10. Create a new test user
+11. Click "🗑️ Delete" and confirm
+12. Confirm the user no longer appears in the user list and cannot log in
+13. Confirm LDAP users do not have a delete button
+
 **Verification points**:
 - ✅ Edited user info takes effect immediately
 - ✅ Permission changes sync after role change
-- ✅ Disabled users cannot log in
+- ✅ Password reset takes effect immediately
+- ✅ Deleted users cannot log in
+- ✅ LDAP users are protected from deletion
 
 ---
 
@@ -452,6 +470,135 @@ asyncio.run(test())
 - ✅ MFT container upload-link is rewritten to `intranet.local`
 - ✅ Both sides can successfully upload/download files through their respective addresses
 
+---
+
+### Test 11: Password Management
+
+**Objective**: Users can change their own password; admins can reset others' passwords and delete local users.
+
+**Steps**:
+
+1. Log into MFT with any user account
+2. Click "🔑 Change Password" in the sidebar
+3. Enter current password and new password
+4. Confirm the success message
+5. Log out and log in with the new password
+
+**Admin Reset Password Test**:
+
+6. Log in as admin
+7. Go to "User Management"
+8. Click "🔑 Reset Password" for a non-LDAP user
+9. Enter a new password
+10. Have that user log in with the new password
+
+**Delete User Test**:
+
+11. Create a new test user (e.g., `tempuser`)
+12. Click "🗑️ Delete" and confirm
+13. Confirm the user no longer appears in the user list and cannot log in
+14. Confirm LDAP users do not have a delete button
+
+**Verification points**:
+- ✅ Password change takes effect immediately
+- ✅ Old password no longer works
+- ✅ LDAP users see a notice that passwords are managed by LDAP
+- ✅ Admin reset password works for local users only
+- ✅ Deleted users cannot log in
+
+---
+
+### Test 12: Audit Log
+
+**Objective**: Reviewers and admins can view a chronological log of all system operations.
+
+**Steps**:
+
+1. Log into MFT as admin
+2. Navigate to "📜 Audit Log" from the sidebar
+3. Verify that operations appear in reverse chronological order:
+   - Login/logout events
+   - Task creation/detection
+   - Approval/rejection actions
+   - File transfer operations
+   - User management changes (create, edit, enable/disable, password reset, delete)
+4. Use the filter tabs to view specific operation types (All, Task, User, Auth)
+5. Verify pagination works with the "Previous / Next" controls
+
+**Verification points**:
+- ✅ Audit log is accessible to reviewers and admins
+- ✅ All operation types are recorded with correct details
+- ✅ Filter tabs correctly filter by action type
+- ✅ Pagination works correctly (30 per page)
+- ✅ Each entry shows timestamp, operator, action, target, and details
+
+---
+
+### Test 13: i18n Multi-Language Switching
+
+**Objective**: The UI correctly switches between Chinese and English based on browser language or manual selection.
+
+**Steps**:
+
+1. Open MFT in a browser with default `Accept-Language: zh-CN` → UI should display in Chinese
+2. Change browser language preference to English (or use `?lang=en` query parameter) → UI should switch to English
+3. Verify that all pages render correctly in both languages:
+   - Login page, Dashboard, Upload, Submissions, Review Board, Downloads, Change Password, User Management, Audit Log
+4. Manually switch language using `?lang=zh` or `?lang=en` in the URL
+5. Verify that the language cookie persists across page navigation
+
+**Verification points**:
+- ✅ Language auto-detection works (Accept-Language header)
+- ✅ `?lang=en` and `?lang=zh` query parameters override auto-detection
+- ✅ All UI text is translated (navigation, forms, buttons, messages, tooltips)
+- ✅ Error messages, email templates, and HTTPException details are translated
+- ✅ Language preference persists via cookie
+
+---
+
+### Test 14: Reviewer Email Auto-Merge
+
+**Objective**: Review notification emails are sent to both `REVIEWER_EMAILS` config and database reviewer users.
+
+**Steps**:
+
+1. Ensure `REVIEWER_EMAILS` in `.env` contains at least one email (e.g., `reviewer@example.com`)
+2. Create a user in the database with role "reviewer" and a valid email address
+3. Upload a file to internal Seafile and wait for MFT to detect it
+4. Check MFT logs for email sending:
+```bash
+docker compose logs seafile-mft 2>&1 | grep -i "email\|reviewer" | tail -10
+```
+5. Verify that both the `REVIEWER_EMAILS` address and the DB reviewer's email received notifications
+
+**Verification points**:
+- ✅ Emails are sent to all configured reviewer addresses
+- ✅ Emails are also sent to database users with reviewer role
+- ✅ Duplicate addresses are deduplicated (set-based merge)
+- ✅ Inactive reviewer users are excluded
+
+---
+
+### Test 15: Comment Tooltip on Review Board
+
+**Objective**: Reviewer comments are visible via a hover tooltip on the review board.
+
+**Steps**:
+
+1. Ensure there are both approved and rejected tasks with review comments
+2. Navigate to the "Review Board"
+3. Find a task that has been approved or rejected with a comment
+4. Hover over the comment indicator icon next to the status
+5. Verify the tooltip displays the full reviewer comment
+6. Scroll the page and verify the tooltip always stays visible (fixed positioning)
+7. Verify the tooltip is not clipped by the filter tabs or the table edge
+
+**Verification points**:
+- ✅ Hovering shows the full review comment
+- ✅ Tooltip positioning is smart (auto-detects upward/downward space)
+- ✅ Tooltip is not obscured by page elements (z-index layering)
+- ✅ Tooltip closes when mouse leaves the icon
+
 ## Common Commands
 
 ```bash
@@ -488,8 +635,10 @@ docker compose down -v
 test/
 ├── docker-compose.yml   # Orchestrates internal/external Seafile + MFT
 ├── setup.sh             # Initialization script (create libraries, upload files)
+├── .gitignore           # Ignore generated .env and data files
 ├── .env                 # Auto-generated (Token, RepoID, and other runtime config)
-└── README.md            # This document
+├── README.md            # This document
+└── README_zh.md         # Chinese version
 ```
 
 ## FAQ

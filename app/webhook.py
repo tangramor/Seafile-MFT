@@ -35,6 +35,7 @@ from fastapi import APIRouter, Request, HTTPException
 
 from .config import get_settings
 from .models import ReviewTask, ReviewStatus, get_db
+from .audit import log_action
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,9 @@ async def receive_webhook(request: Request):
             db.refresh(task)
             created_tasks.append(task)
             logger.info(f"[Webhook] 创建审核任务 #{task.id}: {file_path} (commit {commit_id[:8]})")
+
+            log_action(operator, "task_created", "review_task", task.id,
+                       {"file_name": file_name, "source": "webhook"})
 
         # 事务由 get_db() 上下文管理器自动提交
 

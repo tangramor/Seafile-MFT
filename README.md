@@ -32,13 +32,17 @@ flowchart TD
 |---------|-------------|
 | 🔍 **Smart File Detection** | Auto-detect Seafile version and edition (Community/Pro). Pro >= 7.0 uses real-time Webhook; Community or older versions use polling (directory traversal + mtime comparison). Manual override available. |
 | 🔐 **LDAP Authentication** | LDAP login with role mapping via AD groups (admin / reviewer / submitter) |
-| 👥 **Local Accounts** | Built-in local user management: admin can create, edit, enable/disable users, and assign roles |
-| 👤 **Role-Based Access** | Submitter (upload + view own submissions), Reviewer (review all tasks), Admin (review + user management) |
-| ✉️ **Dual SMTP** | Separate email configs for internal/external networks; approval links auto-point to the correct App URL |
+| 👥 **Local Accounts** | Built-in local user management: admin can create, edit, enable/disable users, assign roles, reset passwords, and delete users |
+| 🔑 **Password Management** | Users can change their own password; admins can reset and delete other users' accounts |
+| 👤 **Role-Based Access** | Submitter (upload + view own submissions), Reviewer (review all tasks + audit log), Admin (review + user management + all permissions) |
+| 🌐 **i18n Multi-Language** | Built-in Chinese/English support with auto-detection (Cookie → Query → Accept-Language → zh fallback). Easy to add more languages via JSON translation files. |
+| ✉️ **Dual SMTP** | Separate email configs for internal/external networks; approval links auto-point to the correct App URL; reviewer emails auto-merge from DB reviewer users |
 | 📤 **Web Upload** | Users can upload files directly via the web UI to internal Seafile and trigger review |
-| 📋 **Review Board** | Reviewers can batch view, approve, and reject pending tasks in the web interface |
+| 📋 **Review Board** | Reviewers can batch view, approve, and reject pending tasks; hover tooltip for reviewer comments |
 | ⬇️ **File Downloads** | After approval, users can download synced files from the external Seafile |
-| 🖥️ **Admin Panel** | Admins can view all tasks, manage users, and manually trigger polling |
+| 🖥️ **Admin Panel** | Admins can view all tasks, manage users, view audit logs, and manually trigger polling |
+| 📜 **Audit Log** | Comprehensive operation log tracking 14 action types (create/approve/reject tasks, manage users, file transfers, etc.) with filtering and pagination |
+| 🛡️ **File Deduplication** | Smart dedup prevents duplicate review tasks for the same file, even when Seafile creates new commits on access |
 | 🐳 **Docker Deployment** | One-command build; all configuration via environment variables |
 
 ## Quick Start
@@ -246,7 +250,9 @@ LDAP user roles are mapped via AD groups: members of `LDAP_ADMIN_GROUP` become a
 | My Submissions | `/my/submissions` | All users |
 | Review Board | `/review-board` | Reviewer / Admin |
 | Download Files | `/downloads` | All users (own files only, or all for reviewers) |
+| Change Password | `/change-password` | All users |
 | User Management | `/admin/users` | Admin |
+| Audit Log | `/admin/audit-log` | Reviewer / Admin |
 
 ![Main Page](./images/Seafile-MFT-en-02.png)
 
@@ -258,6 +264,7 @@ LDAP user roles are mapped via AD groups: members of `LDAP_ADMIN_GROUP` become a
 | `/health` | GET | Health check (includes current detection mode) |
 | `/login` | GET/POST | Login page / submit login |
 | `/logout` | GET | Logout |
+| `/change-password` | GET/POST | Change own password |
 | `/review/{token}` | GET/POST | Email approval link (detail page / submit decision) |
 | `/admin/poll-now` | POST | Manually trigger immediate polling |
 | `/admin/detection-mode` | GET | Query current file detection mode |
@@ -266,6 +273,9 @@ LDAP user roles are mapped via AD groups: members of `LDAP_ADMIN_GROUP` become a
 | `/admin/users/{id}/edit` | POST | Edit user attributes |
 | `/admin/users/{id}/role` | POST | Change user role |
 | `/admin/users/{id}/toggle` | POST | Enable/disable user |
+| `/admin/users/{id}/reset-password` | POST | Reset user password (admin only) |
+| `/admin/users/{id}/delete` | POST | Delete local user (admin only) |
+| `/admin/audit-log` | GET | Audit log (reviewer/admin) |
 | `/webhook/seafile` | POST | Seafile Webhook callback (Webhook mode only) |
 | `/docs` | GET | Swagger API documentation |
 
@@ -276,26 +286,38 @@ seafile-MFT/
 ├── app/
 │   ├── main.py              # FastAPI entry point, lifecycle management, auto detection mode
 │   ├── config.py            # Global configuration (dual SMTP, LDAP, detection mode, etc.)
-│   ├── models.py            # Database models (User / UserSession / ReviewTask / PollerState)
+│   ├── models.py            # Database models (User / UserSession / ReviewTask / PollerState / AuditLog)
 │   ├── auth.py              # LDAP auth, session management, permission dependencies, local user CRUD
-│   ├── portal.py            # Web route handlers (login/upload/review board/downloads/user management)
+│   ├── audit.py             # Audit logging module (14 action types, integrated across all modules)
+│   ├── portal.py            # Web route handlers (login/upload/review board/downloads/user management/audit log)
 │   ├── review.py            # Email token-based approval link handling
 │   ├── poller.py            # Polling core (directory traversal + mtime comparison, compatible with Seafile 6.x)
 │   ├── webhook.py           # Webhook callback handling (HMAC-SHA256 signature verification)
 │   ├── seafile_version.py   # Seafile version detection module
 │   ├── transfer.py          # Seafile file transfer (internal download → external upload)
 │   ├── email_notify.py      # Dual SMTP email notifications
+│   ├── i18n/
+│   │   ├── __init__.py      # Translation manager (JSON-based, Chinese as key, fallback to original text)
+│   │   ├── middleware.py     # FastAPI middleware (Cookie → Query → Accept-Language detection)
+│   │   └── translations/
+│   │       ├── zh.json      # Chinese (placeholder, key=text by design)
+│   │       └── en.json      # English translations (~250 entries)
 │   └── templates/
-│       ├── base.html        # Unified layout (Header + sidebar + responsive)
+│       ├── base.html        # Unified layout (Header + sidebar + responsive, i18n-aware)
 │       ├── login.html       # Login page
 │       ├── dashboard.html   # Dashboard (role-based stats)
 │       ├── upload.html      # Web file upload page
 │       ├── my_submissions.html  # My submissions list
-│       ├── review_board.html    # Review board
+│       ├── review_board.html    # Review board (with comment tooltip)
 │       ├── review.html      # Email approval detail page
 │       ├── downloads.html   # Synced file download list
+│       ├── change_password.html # Change own password
 │       ├── admin.html       # Admin panel (all tasks)
-│       └── admin_users.html # User management (create/edit/enable-disable/role change)
+│       ├── admin_users.html # User management (create/edit/enable-disable/role change/reset password/delete)
+│       ├── audit_log.html   # Audit log with filtering and pagination
+│       └── email/
+│           ├── review_notify.html  # Review notification email template
+│           └── result_notify.html  # Approval result email template
 ├── requirements.txt
 ├── Dockerfile
 ├── docker-compose.yml
@@ -326,11 +348,15 @@ sequenceDiagram
 
 ## Extension Ideas
 
+- ✅ **Audit log** — Implemented! Records all operations (task creation, approval, user management, file transfers, etc.) with filtering and pagination.
 - **Multi-library mapping**: Modify poller/webhook modules to support multiple internal libraries mapped to different external libraries
 - **Approval rules**: Auto-approve or require manual review based on file type, size, etc.
 - **Multi-reviewer**: Implement countersign (all must approve) or or-sign (anyone can approve)
 - **File preview**: Add PDF/image online preview on the review page
-- **Audit log**: Record all operations to a separate audit table
+- **External auth providers**: Add OAuth2/OIDC support (e.g., Google, GitHub, Microsoft Entra ID)
+- **REST API + webhook for external integrations**: Expose a documented REST API and webhook notifications so third-party systems (CI/CD, CMS, ERP) can submit files or react to review events
+- **Dashboard analytics**: Add charts and statistics for review throughput, approval rates, and file transfer volumes
+- **More languages**: Add translation JSON files for additional locales (ja, ko, fr, de, etc.) — the i18n framework makes this straightforward
 
 ## License
 

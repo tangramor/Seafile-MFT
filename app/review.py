@@ -18,6 +18,7 @@ from .config import get_settings
 from .i18n import _, get_locale
 from .models import ReviewTask, ReviewStatus, get_db, get_db_async
 from .transfer import transfer_file_to_extranet
+from .audit import log_action
 from .email_notify import send_result_notification
 
 router = APIRouter()
@@ -105,6 +106,9 @@ async def approve_task(
     db.commit()
     db.refresh(task)
 
+    log_action(reviewer_name, "task_approved", "review_task", task.id,
+               {"file_name": task.file_name, "uploader": task.uploader, "comment": comment})
+
     # 异步传输文件到外网
     import asyncio
     asyncio.create_task(_transfer_and_notify(task.id))
@@ -147,6 +151,9 @@ async def reject_task(
     task.reviewed_at = datetime.utcnow()
     db.commit()
     db.refresh(task)
+
+    log_action(reviewer_name, "task_rejected", "review_task", task.id,
+               {"file_name": task.file_name, "uploader": task.uploader, "comment": comment})
 
     # 通知上传者（异步）
     import asyncio
@@ -223,9 +230,13 @@ async def _transfer_and_notify(task_id: int):
             task.status = ReviewStatus.TRANSFERRED
             task.extranet_file_path = extranet_path
             task.transferred_at = datetime.utcnow()
+            log_action("system", "task_transferred", "review_task", task_id,
+                       {"file_name": task.file_name, "extranet_path": extranet_path})
         else:
             task.status = ReviewStatus.FAILED
             task.transfer_error = error_msg
+            log_action("system", "task_failed", "review_task", task_id,
+                       {"file_name": task.file_name, "error": error_msg})
 
         db.commit()
         db.refresh(task)

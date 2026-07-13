@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session
 from .config import get_settings
 from .models import ReviewTask, ReviewStatus, PollerState, get_db
 from .email_notify import send_review_notification
+from .audit import log_action
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +264,9 @@ async def poll_once():
             db.flush()
             db.refresh(task)
             logger.info(f"[Poller] 创建审核任务 #{task.id}: {file_path} (mtime={file_info.get('mtime')})")
+
+            log_action("system", "task_created", "review_task", task.id,
+                       {"file_name": file_name, "uploader": creator, "source": "poller"})
 
             # 发送审批邮件（异步）
             asyncio.create_task(send_review_notification(task))

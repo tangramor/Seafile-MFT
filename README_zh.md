@@ -30,13 +30,17 @@ flowchart TD
 |------|------|
 | 🔍 **智能文件检测** | 自动识别 Seafile 版本和版本类型（社区版/专业版），专业版 >= 7.0 走 Webhook 实时检测，社区版或旧版走轮询（目录遍历 + mtime 对比），可手动指定模式 |
 | 🔐 **LDAP 认证** | 支持 LDAP 登录，按 AD 组映射角色（admin / reviewer / submitter） |
-| 👥 **本地账号** | 内置本地用户管理，管理员可创建、编辑、禁用/启用用户，分配角色 |
-| 👤 **角色权限** | 提交者（上传 + 查看自己的申请）、审核者（审核所有申请）、管理员（审核 + 用户管理） |
-| ✉️ **双 SMTP** | 内网/外网各一套邮件配置，审批链接自动指向对应网络的 App URL |
+| 👥 **本地账号** | 内置本地用户管理，管理员可创建、编辑、禁用/启用用户，分配角色，重置密码，删除用户 |
+| 🔑 **密码管理** | 用户可修改自己的密码；管理员可重置其他用户密码及删除非 LDAP 用户 |
+| 👤 **角色权限** | 提交者（上传 + 查看自己的申请）、审核者（审核所有申请 + 审计日志）、管理员（审核 + 用户管理 + 全部权限） |
+| 🌐 **多语言支持** | 内置中英文双语，自动检测语言（Cookie → Query → Accept-Language → 默认中文），通过 JSON 翻译文件轻松扩展更多语言 |
+| ✉️ **双 SMTP** | 内网/外网各一套邮件配置，审批链接自动指向对应网络的 App URL；审核者邮箱自动合并数据库中的审核角色用户 |
 | 📤 **Web 上传** | 用户可直接通过 Web 界面上传文件到内网 Seafile 并发起审核 |
-| 📋 **审核看板** | 审核者 Web 界面批量查看、通过、拒绝待审任务 |
+| 📋 **审核看板** | 审核者 Web 界面批量查看、通过、拒绝待审任务；鼠标悬停可查看审批备注 |
 | ⬇️ **文件下载** | 审核通过后，用户可从外网 Seafile 下载已同步的文件 |
-| 🖥️ **管理后台** | 管理员可查看所有任务、管理用户、手动触发轮询 |
+| 🖥️ **管理后台** | 管理员可查看所有任务、管理用户、查看审计日志、手动触发轮询 |
+| 📜 **审计日志** | 完整的操作记录追踪，覆盖 14 种操作类型（创建/审批任务、管理用户、文件传输等），支持筛选和分页 |
+| 🛡️ **文件去重** | 智能去重，防止 Seafile 浏览产生新 commit 时对同一文件重复创建审核任务 |
 | 🐳 **Docker 部署** | 一键构建，所有配置通过环境变量传递 |
 
 ## 快速开始
@@ -244,7 +248,9 @@ LDAP 用户的角色通过 AD 组映射：属于 `LDAP_ADMIN_GROUP` 则为管理
 | 我的申请 | `/my/submissions` | 所有用户 |
 | 审核看板 | `/review-board` | 审核者/管理员 |
 | 下载文件 | `/downloads` | 所有用户（仅自己的文件或审核者看全部） |
+| 修改密码 | `/change-password` | 所有用户 |
 | 用户管理 | `/admin/users` | 管理员 |
+| 审计日志 | `/admin/audit-log` | 审核者/管理员 |
 
 ![Main Page](./images/Seafile-MFT-zh-02.png)
 
@@ -256,6 +262,7 @@ LDAP 用户的角色通过 AD 组映射：属于 `LDAP_ADMIN_GROUP` 则为管理
 | `/health` | GET | 健康检查（含当前检测模式） |
 | `/login` | GET/POST | 登录页 / 提交登录 |
 | `/logout` | GET | 注销 |
+| `/change-password` | GET/POST | 修改自己的密码 |
 | `/review/{token}` | GET/POST | 邮件审批链接（详情页 / 提交审批） |
 | `/admin/poll-now` | POST | 手动触发立即轮询 |
 | `/admin/detection-mode` | GET | 查询当前文件检测模式 |
@@ -264,6 +271,9 @@ LDAP 用户的角色通过 AD 组映射：属于 `LDAP_ADMIN_GROUP` 则为管理
 | `/admin/users/{id}/edit` | POST | 编辑用户属性 |
 | `/admin/users/{id}/role` | POST | 修改用户角色 |
 | `/admin/users/{id}/toggle` | POST | 启用/禁用用户 |
+| `/admin/users/{id}/reset-password` | POST | 重置用户密码（管理员） |
+| `/admin/users/{id}/delete` | POST | 删除本地用户（管理员） |
+| `/admin/audit-log` | GET | 审计日志（审核者/管理员） |
 | `/webhook/seafile` | POST | Seafile Webhook 回调（仅 Webhook 模式） |
 | `/docs` | GET | Swagger API 文档 |
 
@@ -274,26 +284,38 @@ seafile-MFT/
 ├── app/
 │   ├── main.py              # FastAPI 入口，生命周期管理，自动检测模式
 │   ├── config.py            # 全局配置（双 SMTP、LDAP、检测模式等）
-│   ├── models.py            # 数据库模型（User / UserSession / ReviewTask / PollerState）
+│   ├── models.py            # 数据库模型（User / UserSession / ReviewTask / PollerState / AuditLog）
 │   ├── auth.py              # LDAP 认证、Session 管理、权限依赖、本地用户 CRUD
-│   ├── portal.py            # Web 功能路由（登录/上传/审核看板/下载/用户管理）
+│   ├── audit.py             # 审计日志模块（14 种操作类型，集成于各模块）
+│   ├── portal.py            # Web 功能路由（登录/上传/审核看板/下载/用户管理/审计日志）
 │   ├── review.py            # 邮件 token 审批链接处理
 │   ├── poller.py            # 轮询核心（目录遍历 + mtime 对比，适配 Seafile 6.x）
 │   ├── webhook.py           # Webhook 回调处理（HMAC-SHA256 签名验证）
 │   ├── seafile_version.py   # Seafile 版本检测模块
 │   ├── transfer.py          # Seafile 文件传输（内网下载 → 外网上传）
 │   ├── email_notify.py      # 双 SMTP 邮件通知
+│   ├── i18n/
+│   │   ├── __init__.py      # 翻译管理器（JSON 格式，中文为 key，缺省回退原文）
+│   │   ├── middleware.py     # FastAPI 中间件（Cookie → Query → Accept-Language 检测）
+│   │   └── translations/
+│   │       ├── zh.json      # 中文（占位文件，设计上 key 即文本）
+│   │       └── en.json      # 英文翻译（约 250 条）
 │   └── templates/
-│       ├── base.html        # 统一布局（Header + 侧边栏 + 响应式）
+│       ├── base.html        # 统一布局（Header + 侧边栏 + 响应式，支持多语言）
 │       ├── login.html       # 登录页
 │       ├── dashboard.html   # 首页（按角色展示统计）
 │       ├── upload.html      # Web 文件上传页
 │       ├── my_submissions.html  # 我的申请列表
-│       ├── review_board.html    # 审核看板
+│       ├── review_board.html    # 审核看板（含备注提示框）
 │       ├── review.html      # 邮件审批详情页
 │       ├── downloads.html   # 已同步文件下载列表
+│       ├── change_password.html # 修改密码
 │       ├── admin.html       # 管理后台（所有任务）
-│       └── admin_users.html # 用户管理（创建/编辑/启用禁用/角色变更）
+│       ├── admin_users.html # 用户管理（创建/编辑/启用禁用/角色变更/重置密码/删除）
+│       ├── audit_log.html   # 审计日志（筛选、分页）
+│       └── email/
+│           ├── review_notify.html  # 审核通知邮件模板
+│           └── result_notify.html  # 审批结果邮件模板
 ├── requirements.txt
 ├── Dockerfile
 ├── docker-compose.yml
@@ -324,11 +346,15 @@ sequenceDiagram
 
 ## 扩展建议
 
+- ✅ **审计日志** — 已实现！记录所有操作（任务创建、审批、用户管理、文件传输等），支持筛选和分页。
 - **多库映射**：修改 poller/webhook 模块支持多个内网库对应不同外网库
 - **审批规则**：基于文件类型、大小自动通过或需要人工审批
 - **多审批人**：实现会签（所有人通过）或或签（一人通过即可）
 - **文件预览**：在审批页添加 PDF / 图片在线预览
-- **审计日志**：记录所有操作到单独的审计表
+- **外部认证**：添加 OAuth2/OIDC 支持（如 Google、GitHub、Microsoft Entra ID）
+- **REST API + Webhook 外部集成**：提供标准 REST API 和 Webhook 通知，允许第三方系统（CI/CD、CMS、ERP）提交文件或响应审核事件
+- **仪表板分析**：添加审核吞吐量、通过率、文件传输量等图表统计
+- **更多语言**：为其他地区添加翻译 JSON 文件（日语、韩语、法语、德语等）——多语言框架使扩展非常简单
 
 ## 许可
 

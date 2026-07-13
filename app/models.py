@@ -110,6 +110,22 @@ class PollerState(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class AuditLog(Base):
+    """
+    审计日志表 - 记录所有关键操作（上传、审批、用户管理等）
+    """
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(128), nullable=False, index=True)
+    action = Column(String(64), nullable=False, index=True)
+    target_type = Column(String(32), nullable=False)
+    target_id = Column(Integer, nullable=True)
+    details = Column(Text, default="")
+    ip_address = Column(String(64), default="")
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
 # ==============================
 # 数据库引擎和 Session 工厂（同步模式）
 # ==============================

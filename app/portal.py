@@ -46,6 +46,7 @@ from .email_notify import send_review_notification, send_result_notification
 from .i18n import _, get_locale
 from .models import ReviewStatus, ReviewTask, User, UserRole, get_db
 from .transfer import SeafileClient, transfer_file_to_extranet
+from .audit import log_action
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -104,6 +105,11 @@ async def login_submit(
                 status_code=403,
             )
         session_id = create_session(user, db)
+
+    ip = request.client.host if request.client else ""
+    log_action(username, "user_login", "user", user.id,
+               {"username": username},
+               ip_address=ip)
 
     response = RedirectResponse(next or "/dashboard", status_code=302)
     response.set_cookie(
@@ -289,6 +295,10 @@ async def upload_submit(
         db.refresh(task)
         task_id = task.id
 
+        log_action(current_user.username, "task_created", "review_task", task_id,
+                   {"file_name": file_name, "source": "web"},
+                   ip_address=request.client.host if request.client else "")
+
         asyncio.create_task(send_review_notification(task))
 
     logger.info(f"[Upload] 审核任务已创建 #{task_id}: {intranet_path}")
@@ -363,6 +373,10 @@ async def board_approve(
         db.commit()
         db.refresh(task)
 
+    log_action(current_user.username, "task_approved", "review_task", task_id,
+               {"file_name": task.file_name, "uploader": task.uploader, "comment": comment},
+               ip_address=request.client.host if request.client else "")
+
     asyncio.create_task(_transfer_and_notify(task_id))
 
     return RedirectResponse(
@@ -391,6 +405,10 @@ async def board_reject(
         task.reviewed_at = datetime.utcnow()
         db.commit()
         db.refresh(task)
+
+    log_action(current_user.username, "task_rejected", "review_task", task_id,
+               {"file_name": task.file_name, "uploader": task.uploader, "comment": comment},
+               ip_address=request.client.host if request.client else "")
 
     asyncio.create_task(send_result_notification(task))
 
@@ -463,6 +481,10 @@ async def download_file(
         content = await client.download_file(settings.extranet_repo_id, file_path)
     except Exception as e:
         raise HTTPException(status_code=502, detail=_("从外网 Seafile 下载失败：{error}", error=str(e)))
+
+    log_action(current_user.username, "task_downloaded", "review_task", task_id,
+               {"file_name": file_name},
+               ip_address="")
 
     import urllib.parse
     encoded_name = urllib.parse.quote(file_name)
@@ -544,6 +566,10 @@ async def admin_create_user(
             status_code=302,
         )
 
+    log_action(current_user.username, "user_created", "user", user.id,
+               {"username": username, "role": role_enum.value},
+               ip_address=request.client.host if request.client else "")
+
     return RedirectResponse(
         "/admin/users?msg=" + _("用户「{username}」创建成功", username=username) + "&msg_type=success",
         status_code=302,
@@ -565,12 +591,16 @@ async def admin_change_role(
         except ValueError:
             raise HTTPException(status_code=400, detail=_("无效角色"))
         db.commit()
+        log_action(current_user.username, "user_role_changed", "user", user_id,
+                   {"username": u.username, "new_role": role},
+                   ip_address=request.client.host if request.client else "")
     return RedirectResponse("/admin/users", status_code=302)
 
 
 @router.post("/admin/users/{user_id}/toggle")
 async def admin_toggle_user(
     user_id: int,
+    request: Request,
     current_user: CurrentUser = Depends(require_admin),
 ):
     with get_db() as db:
@@ -579,6 +609,11 @@ async def admin_toggle_user(
             raise HTTPException(status_code=404, detail=_("用户不存在"))
         u.is_active = not u.is_active
         db.commit()
+        log_action(current_user.username,
+                   "user_disabled" if not u.is_active else "user_enabled",
+                   "user", user_id,
+                   {"username": u.username},
+                   ip_address=request.client.host if request.client else "")
     return RedirectResponse("/admin/users", status_code=302)
 
 
@@ -614,6 +649,10 @@ async def admin_edit_user(
             status_code=302,
         )
 
+    log_action(current_user.username, "user_updated", "user", user_id,
+               {"username": user.username, "display_name": display_name, "email": email, "role": role},
+               ip_address=request.client.host if request.client else "")
+
     return RedirectResponse(
         "/admin/users?msg=" + _("用户「{username}」已更新", username=user.username) + "&msg_type=success",
         status_code=302,
@@ -643,6 +682,10 @@ async def admin_reset_password(
             )
         target_user = db.query(User).filter(User.id == user_id).first()
 
+    log_action(current_user.username, "user_password_reset", "user", user_id,
+               {"username": target_user.username},
+               ip_address=request.client.host if request.client else "")
+
     return RedirectResponse(
         "/admin/users?msg=" + _("用户「{username}」的密码已重置", username=target_user.username) + "&msg_type=success",
         status_code=302,
@@ -652,6 +695,7 @@ async def admin_reset_password(
 @router.post("/admin/users/{user_id}/delete")
 async def admin_delete_user(
     user_id: int,
+    request: Request,
     current_user: CurrentUser = Depends(require_admin),
 ):
     """管理员删除用户"""
@@ -663,12 +707,19 @@ async def admin_delete_user(
         )
 
     with get_db() as db:
+        # 先查询用户名用于审计日志
+        target = db.query(User).filter(User.id == user_id).first()
+        target_username = target.username if target else str(user_id)
         ok, error = delete_local_user(db, user_id)
         if not ok:
             return RedirectResponse(
                 "/admin/users?msg=" + error + "&msg_type=danger",
                 status_code=302,
             )
+
+    log_action(current_user.username, "user_deleted", "user", user_id,
+               {"username": target_username},
+               ip_address=request.client.host if request.client else "")
 
     return RedirectResponse(
         "/admin/users?msg=" + _("用户已删除") + "&msg_type=success",
@@ -730,9 +781,59 @@ async def change_password_submit(
             status_code=302,
         )
 
+    log_action(current_user.username, "user_password_changed", "user", current_user.user_id,
+               {"username": current_user.username},
+               ip_address=request.client.host if request.client else "")
+
     return RedirectResponse(
         "/change-password?msg=" + _("密码修改成功") + "&msg_type=success",
         status_code=302,
+    )
+
+
+# ─────────────────────────────────────────────
+# 审计日志（管理员 + 审核者可见）
+# ─────────────────────────────────────────────
+
+@router.get("/admin/audit-log", response_class=HTMLResponse)
+async def audit_log_page(
+    request: Request,
+    action: str = "",
+    page: int = 1,
+    current_user: CurrentUser = Depends(require_reviewer),
+):
+    """审计日志页面 - 可用于管理员和审批员查看"""
+    from .models import AuditLog as AuditLogModel
+    page_size = 30
+
+    with get_db() as db:
+        query = db.query(AuditLogModel)
+        if action:
+            query = query.filter(AuditLogModel.action == action)
+        total = query.count()
+        entries = query.order_by(AuditLogModel.id.desc()).offset(
+            (page - 1) * page_size
+        ).limit(page_size).all()
+
+    # 预解析 details JSON 方便模板使用
+    import json
+    for e in entries:
+        try:
+            e.details_json = json.loads(e.details) if e.details else {}
+        except (json.JSONDecodeError, TypeError):
+            e.details_json = {}
+
+    return templates.TemplateResponse(
+        "audit_log.html",
+        {
+            "request": request,
+            "user": current_user,
+            "entries": entries,
+            "current_action": action,
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+        },
     )
 
 
@@ -767,9 +868,13 @@ async def _transfer_and_notify(task_id: int):
             task.status = ReviewStatus.TRANSFERRED
             task.extranet_file_path = extranet_path
             task.transferred_at = datetime.utcnow()
+            log_action("system", "task_transferred", "review_task", task_id,
+                       {"file_name": task.file_name, "extranet_path": extranet_path})
         else:
             task.status = ReviewStatus.FAILED
             task.transfer_error = error_msg
+            log_action("system", "task_failed", "review_task", task_id,
+                       {"file_name": task.file_name, "error": error_msg})
         db.commit()
         db.refresh(task)
         await send_result_notification(task)
