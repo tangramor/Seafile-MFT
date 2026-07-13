@@ -112,7 +112,7 @@ async def receive_webhook(request: Request):
         for file_path in target_files:
             file_name = file_path.split("/")[-1] if "/" in file_path else file_path
 
-            # 去重检查（同一 commit + 文件路径）
+            # 去重1：同一 commit + 文件路径
             existing = db.query(ReviewTask).filter(
                 ReviewTask.repo_id == repo_id,
                 ReviewTask.file_path == file_path,
@@ -120,6 +120,16 @@ async def receive_webhook(request: Request):
             ).first()
             if existing:
                 logger.info(f"[Webhook] 跳过重复任务: {file_path} (commit {commit_id[:8]})")
+                continue
+
+            # 去重2：同一文件路径已有审核记录（不限 commit_id）
+            # 防止 Seafile 内部操作创建新 commit 导致重复审核
+            existing_any = db.query(ReviewTask).filter(
+                ReviewTask.repo_id == repo_id,
+                ReviewTask.file_path == file_path,
+            ).first()
+            if existing_any:
+                logger.info(f"[Webhook] 文件已存在审核记录，跳过: {file_path}")
                 continue
 
             token = secrets.token_urlsafe(32)

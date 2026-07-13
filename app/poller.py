@@ -235,9 +235,15 @@ async def poll_once():
             # 使用最新 commit id 关联
             commit_id = latest_new_commit["id"]
 
-            # 去重：同路径+commit_id 不重复创建任务
+            # 去重1：同路径+commit_id 不重复创建任务
             if _task_exists(db, settings.intranet_repo_id, file_path, commit_id):
                 logger.info(f"[Poller] 跳过重复任务: {file_path}")
+                continue
+
+            # 去重2：同一文件路径已有审核记录（不限 commit_id）
+            # 防止 Seafile 内部操作（浏览文件库、生成缩略图等）创建新 commit
+            # 导致已处理的文件被误判为"新文件"重复提交审核
+            if _file_already_processed(db, settings.intranet_repo_id, file_path):
                 continue
 
             token = secrets.token_urlsafe(32)
@@ -293,6 +299,21 @@ def _task_exists(db: Session, repo_id: str, file_path: str, commit_id: str) -> b
         ReviewTask.commit_id == commit_id,
     ).first()
     return task is not None
+
+
+def _file_already_processed(db: Session, repo_id: str, file_path: str) -> bool:
+    """
+    检查同一文件路径是否已有任何审核任务记录（不限 commit_id）。
+    防止因 Seafile 内部操作（如浏览文件库生成缩略图、元数据更新等）
+    创建新 commit 导致同一个文件被重复提交审核。
+    """
+    existing = db.query(ReviewTask).filter(
+        ReviewTask.repo_id == repo_id,
+        ReviewTask.file_path == file_path,
+    ).first()
+    if existing:
+        logger.info(f"[Poller] 文件已存在审核记录，跳过: {file_path} (已有任务 #{existing.id}, 状态={existing.status.value})")
+    return existing is not None
 
 
 # ─────────────────────────────────────────────
