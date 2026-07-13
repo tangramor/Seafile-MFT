@@ -239,6 +239,13 @@
     </a>
   </div>
 
+  <div class="nav-group">
+    <div class="nav-label">{{ _("账号") }}</div>
+    <a href="/change-password" class="nav-item {% if '/change-password' in request.url.path %}active{% endif %}">
+      <span class="icon">🔑</span> {{ _("修改密码") }}
+    </a>
+  </div>
+
   {% if user.is_reviewer %}
   <div class="nav-group">
     <div class="nav-label">{{ _("审核管理") }}</div>

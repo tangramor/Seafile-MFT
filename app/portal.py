@@ -31,6 +31,9 @@ from .auth import (
     create_session,
     create_local_user,
     update_local_user,
+    change_password,
+    reset_password,
+    delete_local_user,
     delete_session,
     ensure_default_admin,
     login_user,
@@ -613,6 +616,122 @@ async def admin_edit_user(
 
     return RedirectResponse(
         "/admin/users?msg=" + _("用户「{username}」已更新", username=user.username) + "&msg_type=success",
+        status_code=302,
+    )
+
+
+@router.post("/admin/users/{user_id}/reset-password")
+async def admin_reset_password(
+    user_id: int,
+    new_password: str = Form(...),
+    confirm_password: str = Form(...),
+    current_user: CurrentUser = Depends(require_admin),
+):
+    """管理员重置用户密码"""
+    if new_password != confirm_password:
+        return RedirectResponse(
+            "/admin/users?msg=" + _("两次输入的密码不一致") + "&msg_type=danger",
+            status_code=302,
+        )
+
+    with get_db() as db:
+        ok, error = reset_password(db, user_id, new_password)
+        if not ok:
+            return RedirectResponse(
+                "/admin/users?msg=" + error + "&msg_type=danger",
+                status_code=302,
+            )
+        target_user = db.query(User).filter(User.id == user_id).first()
+
+    return RedirectResponse(
+        "/admin/users?msg=" + _("用户「{username}」的密码已重置", username=target_user.username) + "&msg_type=success",
+        status_code=302,
+    )
+
+
+@router.post("/admin/users/{user_id}/delete")
+async def admin_delete_user(
+    user_id: int,
+    current_user: CurrentUser = Depends(require_admin),
+):
+    """管理员删除用户"""
+    # 不允许删除自己
+    if current_user.user_id == user_id:
+        return RedirectResponse(
+            "/admin/users?msg=" + _("不能删除当前登录的账号") + "&msg_type=danger",
+            status_code=302,
+        )
+
+    with get_db() as db:
+        ok, error = delete_local_user(db, user_id)
+        if not ok:
+            return RedirectResponse(
+                "/admin/users?msg=" + error + "&msg_type=danger",
+                status_code=302,
+            )
+
+    return RedirectResponse(
+        "/admin/users?msg=" + _("用户已删除") + "&msg_type=success",
+        status_code=302,
+    )
+
+
+# ─────────────────────────────────────────────
+# 修改密码（所有已登录用户）
+# ─────────────────────────────────────────────
+
+@router.get("/change-password", response_class=HTMLResponse)
+async def change_password_page(
+    request: Request,
+    current_user: CurrentUser = Depends(require_login),
+):
+    """修改密码页面"""
+    msg = request.query_params.get("msg")
+    msg_type = request.query_params.get("msg_type", "success")
+
+    # 检查是否为 LDAP 用户
+    with get_db() as db:
+        user = db.query(User).filter(User.id == current_user.user_id).first()
+        is_ldap = user and not user.password_hash
+
+    return templates.TemplateResponse(
+        "change_password.html",
+        {
+            "request": request,
+            "user": current_user,
+            "msg": msg,
+            "msg_type": msg_type,
+            "is_ldap": is_ldap,
+        },
+    )
+
+
+@router.post("/change-password")
+async def change_password_submit(
+    request: Request,
+    old_password: str = Form(...),
+    new_password: str = Form(...),
+    confirm_password: str = Form(...),
+    current_user: CurrentUser = Depends(require_login),
+):
+    """提交修改密码"""
+    if new_password != confirm_password:
+        return RedirectResponse(
+            "/change-password?msg=" + _("两次输入的密码不一致") + "&msg_type=danger",
+            status_code=302,
+        )
+
+    with get_db() as db:
+        ok, error = change_password(db, current_user.user_id, old_password, new_password)
+
+    if not ok:
+        return RedirectResponse(
+            "/change-password?msg=" + error + "&msg_type=danger",
+            status_code=302,
+        )
+
+    return RedirectResponse(
+        "/change-password?msg=" + _("密码修改成功") + "&msg_type=success",
         status_code=302,
     )
 

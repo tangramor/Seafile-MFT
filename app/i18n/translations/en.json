@@ -263,6 +263,48 @@
   "两次输入的密码不一致": "Passwords do not match",
   "用户「{username}」创建成功": "User \"{username}\" created successfully",
   "用户「{username}」已更新": "User \"{username}\" updated",
+  "用户「{username}」的密码已重置": "Password for \"{username}\" has been reset",
+  "用户已删除": "User deleted",
+  "不能删除当前登录的账号": "Cannot delete the currently logged-in account",
+
+  "—————————— 修改密码 / Change Password ——————————": "—————————— Change Password ——————————",
+
+  "修改密码": "Change Password",
+  "修改密码 · MFT 审核系统": "Change Password · MFT Review System",
+  "🔑 修改密码": "🔑 Change Password",
+  "该账号通过 LDAP 认证": "This account is authenticated via LDAP",
+  "LDAP 用户的密码需要在 LDAP 服务器上修改，无法通过此系统更改。": "LDAP user passwords must be changed on the LDAP server and cannot be modified through this system.",
+  "请输入旧密码和新密码完成修改。修改成功后需使用新密码重新登录。": "Please enter your old and new passwords. You will need to log in again with the new password after changing.",
+  "旧密码": "Old Password",
+  "输入当前密码": "Enter current password",
+  "新密码": "New Password",
+  "输入新密码（至少4位）": "Enter new password (min 4 chars)",
+  "确认新密码": "Confirm New Password",
+  "再次输入新密码": "Re-enter new password",
+  "确认修改": "Confirm Change",
+  "返回": "Back",
+  "密码修改成功": "Password changed successfully",
+  "旧密码错误": "Old password is incorrect",
+  "新密码长度不能少于4位": "New password must be at least 4 characters",
+  "该账号通过 LDAP 认证，无法在此修改密码": "This account is authenticated via LDAP. Password cannot be changed here.",
+  "该账号通过 LDAP 认证，无法重置密码": "This account is authenticated via LDAP. Password cannot be reset.",
+  "账号": "Account",
+
+  "—————————— 重置密码 / Reset Password ——————————": "—————————— Reset Password ——————————",
+
+  "重置密码": "Reset Password",
+  "为用户": "Set a new password for user",
+  "设置新密码": "Set New Password",
+  "确认重置": "Confirm Reset",
+
+  "—————————— 删除用户 / Delete User ——————————": "—————————— Delete User ——————————",
+
+  "删除用户": "Delete User",
+  "🗑️ 删除": "🗑️ Delete",
+  "确定要删除用户": "Are you sure you want to delete user",
+  "吗？": "?",
+  "删除后无法恢复，该用户的所有会话将立即失效。": "This action cannot be undone. All sessions for this user will be immediately invalidated.",
+  "确认删除": "Confirm Delete",
 
   "—————————— 邮件 / Email ——————————": "—————————— Email ——————————",
 

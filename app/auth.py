@@ -390,3 +390,90 @@ def update_local_user(
     db.refresh(user)
     logger.info(f"[Auth] 管理员更新了用户 #{user_id} ({user.username})")
     return user, None
+
+
+def change_password(
+    db: Session,
+    user_id: int,
+    old_password: str,
+    new_password: str,
+) -> tuple:
+    """
+    用户修改自己的密码（需验证旧密码）。
+
+    返回 (True, None) 或 (False, error_msg)：
+      - 成功：(True, None)
+      - 旧密码错误：(False, "旧密码错误")
+      - LDAP 用户不允许本地修改：(False, "该账号通过 LDAP 认证，无法在此修改密码")
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return False, _("用户不存在")
+
+    # LDAP 用户（password_hash 为空）不能通过本地系统修改密码
+    if not user.password_hash:
+        return False, _("该账号通过 LDAP 认证，无法在此修改密码")
+
+    if not _verify_local_password(old_password, user.password_hash):
+        return False, _("旧密码错误")
+
+    if not new_password or len(new_password) < 4:
+        return False, _("新密码长度不能少于4位")
+
+    user.password_hash = _hash_password(new_password)
+    db.commit()
+    logger.info(f"[Auth] 用户 #{user_id} ({user.username}) 修改了密码")
+    return True, None
+
+
+def reset_password(
+    db: Session,
+    user_id: int,
+    new_password: str,
+) -> tuple:
+    """
+    管理员重置指定用户的密码（无需旧密码）。
+
+    返回 (True, None) 或 (False, error_msg)：
+      - 成功：(True, None)
+      - LDAP 用户不允许重置：(False, "该账号通过 LDAP 认证，无法重置密码")
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return False, _("用户不存在")
+
+    if not user.password_hash:
+        return False, _("该账号通过 LDAP 认证，无法重置密码")
+
+    if not new_password or len(new_password) < 4:
+        return False, _("新密码长度不能少于4位")
+
+    user.password_hash = _hash_password(new_password)
+    db.commit()
+    logger.info(f"[Auth] 管理员重置了用户 #{user_id} ({user.username}) 的密码")
+    return True, None
+
+
+def delete_local_user(db: Session, user_id: int) -> tuple:
+    """
+    管理员删除指定本地用户。
+
+    同时删除该用户的所有 Session 记录。
+
+    返回 (True, None) 或 (False, error_msg)：
+      - 成功：(True, None)
+      - 用户不存在：(False, "用户不存在")
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return False, _("用户不存在")
+
+    username = user.username
+
+    # 删除该用户的所有 Session
+    db.query(UserSession).filter(UserSession.user_id == user_id).delete()
+
+    db.delete(user)
+    db.commit()
+    logger.info(f"[Auth] 管理员删除了用户 #{user_id} ({username})")
+    return True, None
