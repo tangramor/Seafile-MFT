@@ -8,6 +8,11 @@ English | [中文](./README_zh.md)
 
 ## Overview
 
+The core feature of this system is: **internal users upload files to the internal Seafile, and then, through an approval process, the files are synced to the external Seafile**. For this, the user's environment needs to meet the following conditions:
+
+- Separation between internal and external networks, with Seafile deployed on both networks
+- A server with two network cards that can connect both networks, on which this MFT system is deployed
+
 ### Core Workflow
 
 ```mermaid
