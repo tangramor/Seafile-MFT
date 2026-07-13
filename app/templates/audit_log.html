@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}{{ _("审计日志") }} · {{ _("MFT 审核系统") }}{% endblock %}
+
+{% block content %}
+<h2 style="font-size:20px;font-weight:700;margin-bottom:20px;">{{ _("审计日志") }}</h2>
+
+<!-- 筛选 -->
+<div class="filter-tabs">
+  <a href="/admin/audit-log" class="{% if not current_action %}active{% endif %}">{{ _("全部操作") }}</a>
+  <a href="/admin/audit-log?action=task_created" class="{% if current_action=='task_created' %}active{% endif %}">{{ _("创建任务") }}</a>
+  <a href="/admin/audit-log?action=task_approved" class="{% if current_action=='task_approved' %}active{% endif %}">{{ _("通过审批") }}</a>
+  <a href="/admin/audit-log?action=task_rejected" class="{% if current_action=='task_rejected' %}active{% endif %}">{{ _("拒绝审批") }}</a>
+  <a href="/admin/audit-log?action=task_transferred" class="{% if current_action=='task_transferred' %}active{% endif %}">{{ _("同步完成") }}</a>
+  <a href="/admin/audit-log?action=user_login" class="{% if current_action=='user_login' %}active{% endif %}">{{ _("登录") }}</a>
+  <a href="/admin/audit-log?action=user_created" class="{% if current_action=='user_created' %}active{% endif %}">{{ _("用户管理") }}</a>
+</div>
+
+{% if entries %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th style="width:150px;">{{ _("时间") }}</th>
+        <th style="width:100px;">{{ _("操作人") }}</th>
+        <th style="width:100px;">{{ _("操作类型") }}</th>
+        <th style="width:80px;">{{ _("对象") }}</th>
+        <th>{{ _("详情") }}</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for e in entries %}
+      <tr>
+        <td style="white-space:nowrap;font-size:12px;color:var(--muted);">{{ e.created_at.strftime('%m-%d %H:%M:%S') }}</td>
+        <td style="font-weight:500;">{{ e.username }}</td>
+        <td>
+          {% set action_labels = {
+            'task_created': ('📄 ' + _("创建任务"), 'info'),
+            'task_approved': ('✅ ' + _("通过审批"), 'success'),
+            'task_rejected': ('❌ ' + _("拒绝审批"), 'danger'),
+            'task_transferred': ('🔄 ' + _("同步完成"), 'success'),
+            'task_failed': ('⚠️ ' + _("同步失败"), 'danger'),
+            'task_downloaded': ('⬇️ ' + _("下载文件"), 'info'),
+            'user_login': ('🔑 ' + _("登录"), 'info'),
+            'user_created': ('➕ ' + _("创建用户"), 'success'),
+            'user_updated': ('✏️ ' + _("编辑用户"), 'info'),
+            'user_deleted': ('🗑️ ' + _("删除用户"), 'danger'),
+            'user_password_changed': ('🔒 ' + _("修改密码"), 'info'),
+            'user_password_reset': ('🔓 ' + _("重置密码"), 'warning'),
+            'user_role_changed': ('🔄 ' + _("角色变更"), 'warning'),
+            'user_enabled': ('✅ ' + _("启用用户"), 'success'),
+            'user_disabled': ('🚫 ' + _("禁用用户"), 'danger'),
+          } %}
+          {% set al = action_labels.get(e.action, (e.action, 'info')) %}
+          <span class="badge badge-{{ al[1] }}">{{ al[0] }}</span>
+        </td>
+        <td style="font-size:12px;color:var(--muted);">
+          {% if e.target_type == 'review_task' %}#{{ e.target_id }}{% else %}{{ _("用户") }}{% endif %}
+        </td>
+        <td style="font-size:12px;max-width:320px;word-break:break-all;">
+          {% set d = e.details_json %}
+          {% if e.action in ('task_created',) %}
+            {{ _("文件") }}：{{ d.file_name or '-' }}
+            {% if d.uploader %}<br><span style="color:var(--muted);">{{ _("上传者") }}：{{ d.uploader }}</span>{% endif %}
+            {% if d.source %}<span style="color:var(--muted);"> · {{ d.source }}</span>{% endif %}
+          {% elif e.action in ('task_approved', 'task_rejected') %}
+            {{ _("文件") }}：{{ d.file_name or '-' }}
+            {% if d.uploader %}<br><span style="color:var(--muted);">{{ _("上传者") }}：{{ d.uploader }}</span>{% endif %}
+            {% if d.comment %}<br><span style="color:var(--muted);">{{ _("备注") }}：{{ d.comment }}</span>{% endif %}
+          {% elif e.action == 'task_transferred' %}
+            {{ _("文件") }}：{{ d.file_name or '-' }}
+            {% if d.extranet_path %}<br><span style="color:var(--muted);">{{ _("外网路径") }}：{{ d.extranet_path }}</span>{% endif %}
+          {% elif e.action == 'task_failed' %}
+            {{ _("文件") }}：{{ d.file_name or '-' }}
+            {% if d.error %}<br><span style="color:#ea4335;">{{ d.error }}</span>{% endif %}
+          {% elif e.action == 'task_downloaded' %}
+            {{ _("文件") }}：{{ d.file_name or '-' }}
+          {% elif e.action == 'user_login' %}
+            {{ d.username or '-' }}
+          {% elif e.action in ('user_created', 'user_deleted', 'user_password_changed', 'user_password_reset') %}
+            {{ d.username or '-' }}
+            {% if d.role %}<span style="color:var(--muted);"> · {{ d.role }}</span>{% endif %}
+          {% elif e.action == 'user_updated' %}
+            {{ d.username or '-' }}
+            {% if d.role %}<span style="color:var(--muted);"> · {{ _("角色") }}：{{ d.role }}</span>{% endif %}
+          {% elif e.action == 'user_role_changed' %}
+            {{ d.username or '-' }} → <span style="color:var(--primary);">{{ d.new_role or '-' }}</span>
+          {% elif e.action in ('user_enabled', 'user_disabled') %}
+            {{ d.username or '-' }}
+          {% else %}
+            {{ e.details }}
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- 分页 -->
+{% set total_pages = (total // page_size) + (1 if total % page_size else 0) %}
+{% if total_pages > 1 %}
+<div style="text-align:center;margin-top:20px;font-size:13px;">
+  {% for p in range(1, total_pages + 1) %}
+    {% set action_param = '&action=' + current_action if current_action else '' %}
+    {% if p == page %}
+    <span style="display:inline-block;padding:4px 10px;margin:0 2px;background:var(--primary);color:#fff;border-radius:4px;">{{ p }}</span>
+    {% else %}
+    <a href="/admin/audit-log?page={{ p }}{{ action_param }}" style="display:inline-block;padding:4px 10px;margin:0 2px;border:1px solid var(--border);border-radius:4px;color:var(--primary);text-decoration:none;">{{ p }}</a>
+    {% endif %}
+  {% endfor %}
+  <span style="color:var(--muted);margin-left:8px;">{{ _("共 {total} 条", total=total) }}</span>
+</div>
+{% endif %}
+
+{% else %}
+<div style="text-align:center;padding:60px;color:#aaa;">
+  <p>{{ _("暂无审计日志") }}</p>
+</div>
+{% endif %}
+{% endblock %}
