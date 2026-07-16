@@ -81,7 +81,7 @@
         {% set is_edit = (request.query_params.get('edit') | int) == u.id %}
         <tr style="{% if is_edit %}background:#f0f7ff;{% endif %}">
           <td style="color:#999;font-size:12px;">{{ u.id }}</td>
-          <td style="font-weight:500;">{{ u.username }}{% if not u.password_hash %} <span style="font-size:10px;color:#999;background:#f0f0f0;padding:1px 5px;border-radius:3px;">LDAP</span>{% endif %}</td>
+          <td style="font-weight:500;">{{ u.username }}{% if not u.password_hash %} <span style="font-size:10px;color:#999;background:#f0f0f0;padding:1px 5px;border-radius:3px;">{% if auth_method == 'seafile' %}Seafile{% else %}LDAP{% endif %}</span>{% endif %}</td>
           {% if is_edit %}
           <form method="post" action="/admin/users/{{ u.id }}/edit" id="edit-form-{{ u.id }}">
           <td>

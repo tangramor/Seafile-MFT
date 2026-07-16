@@ -59,6 +59,17 @@ class Settings(BaseSettings):
     ldap_reviewer_group: str = "mft-reviewers"   # 对应审核者的 LDAP 组名
     ldap_admin_group: str = "mft-admins"         # 对应管理员的 LDAP 组名
 
+    # ── 认证方式
+    # "local"   → 仅使用本地账密登录
+    # "ldap"    → admin 使用本地账号，其他用户使用 LDAP 认证（默认）
+    # "seafile" → admin 使用本地账号，其他用户通过 Seafile API /api2/auth-token/ 认证
+    auth_method: str = "local"
+
+    # ── Seafile 认证目标（仅 auth_method=seafile 时生效）
+    # "intranet" → 使用内网 Seafile 验证
+    # "extranet" → 使用外网 Seafile 验证
+    auth_seafile: str = "intranet"
+
     # ── 默认本地 admin 密码（首次部署初始化用，留空则不创建）
     default_admin_password: str = "admin123"
 

@@ -242,6 +242,10 @@ services:
       # ── LDAP（禁用） ──
       - LDAP_HOST=
 
+      # ── 认证方式 ──
+      - AUTH_METHOD=local
+      - AUTH_SEAFILE=intranet
+
     depends_on:
       seafile-intranet:
         condition: service_healthy

@@ -288,6 +288,13 @@
   "新密码长度不能少于4位": "New password must be at least 4 characters",
   "该账号通过 LDAP 认证，无法在此修改密码": "This account is authenticated via LDAP. Password cannot be changed here.",
   "该账号通过 LDAP 认证，无法重置密码": "This account is authenticated via LDAP. Password cannot be reset.",
+  "该账号通过 Seafile 认证，无法在此修改密码": "This account is authenticated via Seafile. Password cannot be changed here.",
+  "该账号通过 Seafile 认证，无法重置密码": "This account is authenticated via Seafile. Password cannot be reset.",
+  "该账号通过 Seafile 认证": "This account is authenticated via Seafile",
+  "Seafile 用户的密码需要在 Seafile 系统中修改，无法通过此系统更改。": "Seafile user passwords must be changed in the Seafile system and cannot be modified through this system.",
+  "请使用本地账号登录": "Please log in with your local account",
+  "请使用 Seafile 账号登录": "Please log in with your Seafile account",
+  "请登录": "Please log in",
   "账号": "Account",
 
   "—————————— 重置密码 / Reset Password ——————————": "—————————— Reset Password ——————————",

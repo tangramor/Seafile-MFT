@@ -76,9 +76,16 @@ async def login_page(request: Request, next: str = "/dashboard"):
             from .auth import get_session
             if get_session(session_id, db):
                 return RedirectResponse(next, status_code=302)
+    settings = get_settings()
+    auth_hint_map = {
+        "local":   _("请使用本地账号登录"),
+        "ldap":    _("请使用 LDAP 账号登录"),
+        "seafile": _("请使用 Seafile 账号登录"),
+    }
+    auth_hint = auth_hint_map.get(settings.auth_method.lower(), _("请登录"))
     return templates.TemplateResponse(
         "login.html",
-        {"request": request, "next": next, "error": None},
+        {"request": request, "next": next, "error": None, "auth_hint": auth_hint},
     )
 
 
@@ -93,15 +100,29 @@ async def login_submit(
         ensure_default_admin(db)
         user = login_user(username, password, db)
         if not user:
+            settings = get_settings()
+            auth_hint_map = {
+                "local":   _("请使用本地账号登录"),
+                "ldap":    _("请使用 LDAP 账号登录"),
+                "seafile": _("请使用 Seafile 账号登录"),
+            }
+            auth_hint = auth_hint_map.get(settings.auth_method.lower(), _("请登录"))
             return templates.TemplateResponse(
                 "login.html",
-                {"request": request, "next": next, "error": _("用户名或密码错误")},
+                {"request": request, "next": next, "error": _("用户名或密码错误"), "auth_hint": auth_hint},
                 status_code=401,
             )
         if not user.is_active:
+            settings = get_settings()
+            auth_hint_map = {
+                "local":   _("请使用本地账号登录"),
+                "ldap":    _("请使用 LDAP 账号登录"),
+                "seafile": _("请使用 Seafile 账号登录"),
+            }
+            auth_hint = auth_hint_map.get(settings.auth_method.lower(), _("请登录"))
             return templates.TemplateResponse(
                 "login.html",
-                {"request": request, "next": next, "error": _("账号已被禁用")},
+                {"request": request, "next": next, "error": _("账号已被禁用"), "auth_hint": auth_hint},
                 status_code=403,
             )
         session_id = create_session(user, db)
@@ -509,6 +530,7 @@ async def admin_users(
 ):
     msg = request.query_params.get("msg")
     msg_type = request.query_params.get("msg_type", "success")
+    settings = get_settings()
     with get_db() as db:
         users = db.query(User).order_by(User.created_at.desc()).all()
     return templates.TemplateResponse(
@@ -520,6 +542,7 @@ async def admin_users(
             "roles": UserRole,
             "msg": msg,
             "msg_type": msg_type,
+            "auth_method": settings.auth_method.lower(),
         },
     )
 
@@ -740,10 +763,12 @@ async def change_password_page(
     msg = request.query_params.get("msg")
     msg_type = request.query_params.get("msg_type", "success")
 
-    # 检查是否为 LDAP 用户
+    # 检查是否为外部认证用户（LDAP / Seafile）
+    settings = get_settings()
+    auth_method = settings.auth_method.lower()
     with get_db() as db:
         user = db.query(User).filter(User.id == current_user.user_id).first()
-        is_ldap = user and not user.password_hash
+        is_external = user and not user.password_hash
 
     return templates.TemplateResponse(
         "change_password.html",
@@ -752,7 +777,8 @@ async def change_password_page(
             "user": current_user,
             "msg": msg,
             "msg_type": msg_type,
-            "is_ldap": is_ldap,
+            "is_external": is_external,
+            "auth_method": auth_method,
         },
     )
 

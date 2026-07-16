@@ -55,6 +55,10 @@ services:
       - LDAP_REVIEWER_GROUP=${LDAP_REVIEWER_GROUP:-mft-reviewers}
       - LDAP_ADMIN_GROUP=${LDAP_ADMIN_GROUP:-mft-admins}
       - DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD:-admin123}
+      # ── 认证方式（local / ldap / seafile）
+      - AUTH_METHOD=${AUTH_METHOD:-ldap}
+      # ── Seafile 认证目标（intranet / extranet，仅 AUTH_METHOD=seafile 时生效）
+      - AUTH_SEAFILE=${AUTH_SEAFILE:-intranet}
       - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-60}
       - POLL_ON_STARTUP=${POLL_ON_STARTUP:-true}
       # ── 文件检测模式（auto/webhook/poll）

@@ -1,9 +1,10 @@
 """
-认证模块：LDAP 登录 + 服务端 Session + 权限依赖
+认证模块：多种认证方式 + 服务端 Session + 权限依赖
 
-支持两种登录方式：
-1. LDAP 认证（主要方式）：通过 ldap3 绑定校验用户名/密码
-2. 本地账号（备用）：仅限 admin，密码存 bcrypt hash
+支持三种认证方式（由 AUTH_METHOD 配置决定）：
+1. local  — 仅本地账密登录
+2. ldap   — admin 用本地账号，其他用户走 LDAP 认证
+3. seafile— admin 用本地账号，其他用户走 Seafile API /api2/auth-token/ 认证
 
 Session 以服务端 DB 存储为主，Cookie 只携带 session_id（HttpOnly）。
 """
@@ -11,9 +12,9 @@ import hashlib
 import logging
 import secrets
 from datetime import datetime, timedelta
-from functools import wraps
 from typing import Optional
 
+import httpx
 from fastapi import Cookie, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
@@ -124,16 +125,116 @@ def _resolve_role_from_groups(groups: list) -> UserRole:
 
 
 # ──────────────────────────────────────────
-# 本地密码（仅 admin 备用）
+# Seafile API 认证
+# ──────────────────────────────────────────
+
+def _seafile_authenticate(username: str, password: str) -> Optional[dict]:
+    """
+    通过 Seafile API /api2/auth-token/ 校验用户名密码。
+    成功返回 {'username', 'email', 'display_name'}；
+    失败返回 None。
+    """
+    settings = get_settings()
+
+    # 确定使用内网还是外网 Seafile
+    if settings.auth_seafile == "extranet":
+        seafile_url = settings.extranet_seafile_url
+    else:
+        seafile_url = settings.intranet_seafile_url
+
+    try:
+        # 调用 /api2/auth-token/ 验证账密
+        resp = httpx.post(
+            f"{seafile_url}/api2/auth-token/",
+            data={"username": username, "password": password},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            logger.debug(f"[Auth] Seafile 认证失败 ({resp.status_code}): {resp.text[:200]}")
+            return None
+
+        token = resp.json().get("token", "")
+        if not token:
+            return None
+
+        # 尝试获取用户信息（邮箱、显示名）
+        email = ""
+        display_name = username
+        try:
+            info_resp = httpx.get(
+                f"{seafile_url}/api/v2.1/user/",
+                headers={"Authorization": f"Token {token}"},
+                timeout=10,
+            )
+            if info_resp.status_code == 200:
+                info = info_resp.json()
+                email = info.get("email", "")
+                display_name = info.get("name", "") or username
+        except Exception as e:
+            logger.debug(f"[Auth] 获取 Seafile 用户信息失败: {e}")
+
+        return {
+            "username": username,
+            "email": email,
+            "display_name": display_name,
+        }
+    except Exception as e:
+        logger.error(f"[Auth] Seafile API 连接异常: {e}")
+        return None
+
+
+# ──────────────────────────────────────────
+# 本地密码
 # ──────────────────────────────────────────
 
 def _hash_password(password: str) -> str:
-    """SHA-256 简单哈希（仅用于本地 admin 账号）"""
+    """SHA-256 简单哈希（仅用于本地账号）"""
     return hashlib.sha256(password.encode()).hexdigest()
 
 
 def _verify_local_password(plain: str, hashed: str) -> bool:
     return _hash_password(plain) == hashed
+
+
+def _try_local_auth(username: str, password: str, db: Session) -> Optional[User]:
+    """本地账密验证，成功返回 User 并更新 last_login"""
+    user = db.query(User).filter(User.username == username).first()
+    if user and user.password_hash and _verify_local_password(password, user.password_hash):
+        user.last_login = datetime.utcnow()
+        db.commit()
+        db.refresh(user)
+        return user
+    return None
+
+
+def _upsert_external_user(
+    db: Session,
+    username: str,
+    email: str,
+    display_name: str,
+    role: UserRole = UserRole.SUBMITTER,
+) -> User:
+    """创建或更新外部认证用户（LDAP / Seafile），返回 User 对象"""
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        user = User(
+            username=username,
+            email=email,
+            display_name=display_name or username,
+            role=role,
+        )
+        db.add(user)
+    else:
+        # 每次登录刷新外部信息（不覆盖已有 role，由管理员手动管理）
+        if email:
+            user.email = email
+        if display_name:
+            user.display_name = display_name
+        # 首次登录默认 submitter，已有用户保留原 role
+    user.last_login = datetime.utcnow()
+    db.commit()
+    db.refresh(user)
+    return user
 
 
 # ──────────────────────────────────────────
@@ -142,43 +243,53 @@ def _verify_local_password(plain: str, hashed: str) -> bool:
 
 def login_user(username: str, password: str, db: Session) -> Optional[User]:
     """
-    尝试 LDAP 认证，失败时回退本地账号。
-    认证成功后同步用户信息到 DB 并返回 User 对象。
+    根据 AUTH_METHOD 配置选择认证策略：
+    - local:   仅本地账密
+    - ldap:    admin 走本地，其他用户走 LDAP（失败回退本地）
+    - seafile: admin 走本地，其他用户走 Seafile API（失败回退本地）
     """
     settings = get_settings()
+    method = settings.auth_method.lower()
 
-    # 1. 先试 LDAP
-    ldap_info = _ldap_authenticate(username, password)
-    if ldap_info:
-        role = _resolve_role_from_groups(ldap_info["groups"])
-        user = db.query(User).filter(User.username == username).first()
-        if not user:
-            user = User(
-                username=username,
+    # admin 始终使用本地认证（在 ldap / seafile 模式下）
+    if username == "admin" and method in ("ldap", "seafile"):
+        return _try_local_auth(username, password, db)
+
+    # ── local 模式：仅本地认证 ──
+    if method == "local":
+        return _try_local_auth(username, password, db)
+
+    # ── ldap 模式：先 LDAP，失败回退本地 ──
+    if method == "ldap":
+        ldap_info = _ldap_authenticate(username, password)
+        if ldap_info:
+            role = _resolve_role_from_groups(ldap_info["groups"])
+            return _upsert_external_user(
+                db,
+                username=ldap_info["username"],
                 email=ldap_info["email"],
                 display_name=ldap_info["display_name"],
                 role=role,
             )
-            db.add(user)
-        else:
-            # 每次登录刷新 LDAP 信息（组变了可以立即生效）
-            user.email = ldap_info["email"] or user.email
-            user.display_name = ldap_info["display_name"] or user.display_name
-            user.role = role
-        user.last_login = datetime.utcnow()
-        db.commit()
-        db.refresh(user)
-        return user
+        # 回退本地
+        return _try_local_auth(username, password, db)
 
-    # 2. 回退本地账号
-    user = db.query(User).filter(User.username == username).first()
-    if user and user.password_hash and _verify_local_password(password, user.password_hash):
-        user.last_login = datetime.utcnow()
-        db.commit()
-        db.refresh(user)
-        return user
+    # ── seafile 模式：先 Seafile API，失败回退本地 ──
+    if method == "seafile":
+        seafile_info = _seafile_authenticate(username, password)
+        if seafile_info:
+            return _upsert_external_user(
+                db,
+                username=seafile_info["username"],
+                email=seafile_info["email"],
+                display_name=seafile_info["display_name"],
+            )
+        # 回退本地
+        return _try_local_auth(username, password, db)
 
-    return None
+    # 未知配置，回退本地
+    logger.warning(f"[Auth] 未知 AUTH_METHOD: {method}，回退本地认证")
+    return _try_local_auth(username, password, db)
 
 
 # ──────────────────────────────────────────
@@ -410,8 +521,11 @@ def change_password(
     if not user:
         return False, _("用户不存在")
 
-    # LDAP 用户（password_hash 为空）不能通过本地系统修改密码
+    # 外部认证用户（password_hash 为空）不能通过本地系统修改密码
     if not user.password_hash:
+        auth_method = get_settings().auth_method.lower()
+        if auth_method == "seafile":
+            return False, _("该账号通过 Seafile 认证，无法在此修改密码")
         return False, _("该账号通过 LDAP 认证，无法在此修改密码")
 
     if not _verify_local_password(old_password, user.password_hash):
@@ -443,6 +557,9 @@ def reset_password(
         return False, _("用户不存在")
 
     if not user.password_hash:
+        auth_method = get_settings().auth_method.lower()
+        if auth_method == "seafile":
+            return False, _("该账号通过 Seafile 认证，无法重置密码")
         return False, _("该账号通过 LDAP 认证，无法重置密码")
 
     if not new_password or len(new_password) < 4:
