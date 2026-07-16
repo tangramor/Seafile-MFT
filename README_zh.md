@@ -111,7 +111,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 | `REVIEWER_EMAILS` | 审批人邮箱（逗号分隔） | — |
 | `REVIEW_TOKEN_EXPIRE_HOURS` | 邮件中审批链接有效时间 | `72` |
 | **认证** | | |
-| `AUTH_METHOD` | 认证方式：`local` / `ldap` / `seafile` | `local` |
+| `AUTH_METHOD` | 认证方式：`local` / `ldap` / `seafile` | `seafile` |
 | `AUTH_SEAFILE` | Seafile 认证时使用哪个 Seafile（仅 `AUTH_METHOD=seafile`）：`intranet` / `extranet` | `intranet` |
 | **LDAP 认证** | 仅 `AUTH_METHOD=ldap` 时生效 | |
 | `LDAP_HOST` | LDAP 服务器地址 | — |

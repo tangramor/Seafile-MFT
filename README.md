@@ -113,7 +113,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 | `REVIEWER_EMAILS` | Reviewer email addresses (comma-separated) | — |
 | `REVIEW_TOKEN_EXPIRE_HOURS` | Validity period of email approval links | `72` |
 | **Authentication** | | |
-| `AUTH_METHOD` | Auth mode: `local` / `ldap` / `seafile` | `local` |
+| `AUTH_METHOD` | Auth mode: `local` / `ldap` / `seafile` | `seafile` |
 | `AUTH_SEAFILE` | Which Seafile to verify against (only when `AUTH_METHOD=seafile`): `intranet` / `extranet` | `intranet` |
 | **LDAP Auth** | Only used when `AUTH_METHOD=ldap` | |
 | `LDAP_HOST` | LDAP server address | — |
