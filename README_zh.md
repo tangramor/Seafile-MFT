@@ -29,7 +29,7 @@ flowchart TD
 | 特性 | 说明 |
 |------|------|
 | 🔍 **智能文件检测** | 自动识别 Seafile 版本和版本类型（社区版/专业版），专业版 >= 7.0 走 Webhook 实时检测，社区版或旧版走轮询（目录遍历 + mtime 对比），可手动指定模式 |
-| 🔐 **LDAP 认证** | 支持 LDAP 登录，按 AD 组映射角色（admin / reviewer / submitter） |
+| 🔐 **多认证模式** | 通过 `AUTH_METHOD` 支持三种认证方式：`local`（仅本地账号）、`ldap`（LDAP + 本地 admin 回退）、`seafile`（Seafile API Token 认证）。管理员始终使用本地认证。 |
 | 👥 **本地账号** | 内置本地用户管理，管理员可创建、编辑、禁用/启用用户，分配角色，重置密码，删除用户 |
 | 🔑 **密码管理** | 用户可修改自己的密码；管理员可重置其他用户密码及删除非 LDAP 用户 |
 | 👤 **角色权限** | 提交者（上传 + 查看自己的申请）、审核者（审核所有申请 + 审计日志）、管理员（审核 + 用户管理 + 全部权限） |
@@ -110,7 +110,10 @@ uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 | **审批** | | |
 | `REVIEWER_EMAILS` | 审批人邮箱（逗号分隔） | — |
 | `REVIEW_TOKEN_EXPIRE_HOURS` | 邮件中审批链接有效时间 | `72` |
-| **LDAP 认证** | 留空 `LDAP_HOST` 则仅使用本地账号 | |
+| **认证** | | |
+| `AUTH_METHOD` | 认证方式：`local` / `ldap` / `seafile` | `local` |
+| `AUTH_SEAFILE` | Seafile 认证时使用哪个 Seafile（仅 `AUTH_METHOD=seafile`）：`intranet` / `extranet` | `intranet` |
+| **LDAP 认证** | 仅 `AUTH_METHOD=ldap` 时生效 | |
 | `LDAP_HOST` | LDAP 服务器地址 | — |
 | `LDAP_PORT` | LDAP 端口 | `389` |
 | `LDAP_USE_SSL` | 是否 LDAPS | `false` |
@@ -228,6 +231,42 @@ http://<MFT服务器IP>:8081/webhook/seafile
 
 > **为什么选择目录遍历而非 commit diff？** Seafile 6.x 的 `GET /api2/repos/{id}/commits/{commit_id}/` 和 `GET /api2/repos/{id}/history/{commit_id}/` 均返回 404，无法获取单个 commit 的文件变更。目录遍历 + mtime 对比是兼容所有版本的最可靠方案。
 
+## 认证模式
+
+系统支持三种认证方式，通过 `AUTH_METHOD` 环境变量控制：
+
+| 模式 | 说明 | 管理员登录 | 用户登录 |
+|------|------|-----------|----------|
+| `local` | 仅本地账号 | 本地数据库 | 本地数据库 |
+| `ldap` | LDAP 优先，失败回退本地 | 本地数据库 | LDAP（失败后回退本地验证） |
+| `seafile` | Seafile API Token 认证 | 本地数据库 | Seafile `POST /api2/auth-token/` |
+
+> **管理员始终使用本地认证**，不受 `AUTH_METHOD` 影响。这确保了 LDAP 或 Seafile 服务器故障时管理员仍可登录。
+
+### `local` 模式
+
+所有用户通过本地数据库认证。管理员创建用户账号并设置初始密码，用户可在修改密码页面更改自己的密码。
+
+### `ldap` 模式
+
+- 非管理员用户通过 LDAP（AD）认证。成功后，用户信息（邮箱、显示名、角色）同步到本地数据库。
+- LDAP 认证失败时，回退到本地密码验证（适用于预创建的本地账号）。
+- LDAP 组成员关系决定用户角色：
+  - 属于 `LDAP_ADMIN_GROUP` → 管理员
+  - 属于 `LDAP_REVIEWER_GROUP` → 审核者
+  - 其他 → 提交者
+- 每次登录都会刷新角色。
+
+### `seafile` 模式
+
+- 非管理员用户通过 Seafile API 认证：`POST /api2/auth-token/` 传入用户名和密码，拿到 token 即认证通过。
+- 通过 `AUTH_SEAFILE` 选择使用哪个 Seafile 实例进行验证：
+  - `intranet` — 使用 `INTRANET_SEAFILE_URL`
+  - `extranet` — 使用 `EXTRANET_SEAFILE_URL`
+- 首次登录时，用户以提交者角色创建到本地数据库。管理员可在用户管理页面调整角色。
+- 后续登录时，系统会尝试获取用户资料（`GET /api/v2.1/user/`）以更新邮箱和显示名。
+- Seafile 认证用户无法在此系统修改密码，需在 Seafile 服务器上修改。
+
 ## 用户角色与权限
 
 | 角色 | 权限 |
@@ -236,7 +275,7 @@ http://<MFT服务器IP>:8081/webhook/seafile
 | **审核者** (reviewer) | 审核所有待审任务（通过/拒绝）、下载已同步的外网文件 |
 | **管理员** (admin) | 提交者 + 审核者 + 用户管理（创建/编辑/禁用/更改角色）+ 查看所有任务 |
 
-LDAP 用户的角色通过 AD 组映射：属于 `LDAP_ADMIN_GROUP` 则为管理员，属于 `LDAP_REVIEWER_GROUP` 则为审核者，否则为提交者。每次登录都会刷新角色。
+LDAP 用户的角色通过 AD 组映射：属于 `LDAP_ADMIN_GROUP` 则为管理员，属于 `LDAP_REVIEWER_GROUP` 则为审核者，否则为提交者。每次登录都会刷新角色。Seafile 认证用户首次登录时默认为提交者角色，管理员可在用户管理页面调整。
 
 ## Web 界面
 
@@ -285,7 +324,7 @@ seafile-MFT/
 │   ├── main.py              # FastAPI 入口，生命周期管理，自动检测模式
 │   ├── config.py            # 全局配置（双 SMTP、LDAP、检测模式等）
 │   ├── models.py            # 数据库模型（User / UserSession / ReviewTask / PollerState / AuditLog）
-│   ├── auth.py              # LDAP 认证、Session 管理、权限依赖、本地用户 CRUD
+│   ├── auth.py              # 多认证（本地/LDAP/Seafile）、Session 管理、权限依赖、本地用户 CRUD
 │   ├── audit.py             # 审计日志模块（14 种操作类型，集成于各模块）
 │   ├── portal.py            # Web 功能路由（登录/上传/审核看板/下载/用户管理/审计日志）
 │   ├── review.py            # 邮件 token 审批链接处理
@@ -347,6 +386,7 @@ sequenceDiagram
 ## 扩展建议
 
 - ✅ **审计日志** — 已实现！记录所有操作（任务创建、审批、用户管理、文件传输等），支持筛选和分页。
+- ✅ **Seafile 认证** — 已实现！用户现在可以通过 Seafile API 直接认证（`AUTH_METHOD=seafile`），除本地和 LDAP 模式外的新选择。
 - **多库映射**：修改 poller/webhook 模块支持多个内网库对应不同外网库
 - **审批规则**：基于文件类型、大小自动通过或需要人工审批
 - **多审批人**：实现会签（所有人通过）或或签（一人通过即可）

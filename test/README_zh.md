@@ -596,6 +596,52 @@ docker compose logs seafile-mft 2>&1 | grep -i "email\|审核邮件" | tail -10
 - ✅ 提示框不被页面元素遮挡（z-index 层级）
 - ✅ 鼠标离开图标时提示框自动关闭
 
+---
+
+### 测试 16：认证模式
+
+**验证目标**：验证 `AUTH_METHOD` 三种认证模式均能正常工作。
+
+**前提条件**：测试环境默认使用 `AUTH_METHOD=local`。测试 `seafile` 模式需要内网 Seafile 容器运行中。
+
+#### 16a：`local` 模式（默认）
+
+1. 确保 `.env` 中 `AUTH_METHOD=local`（或不设置，local 为默认值）
+2. 使用 admin 账号登录（本地数据库）
+3. 在用户管理中创建一个本地用户
+4. 使用新用户登录 — 应该成功
+5. 确认登录页显示通用提示（非 LDAP 专用提示）
+
+#### 16b：`seafile` 模式
+
+1. 在 `.env` 中设置 `AUTH_METHOD=seafile` 和 `AUTH_SEAFILE=intranet`
+2. 重启 MFT：`docker compose restart seafile-mft`
+3. 确认登录页提示文字已更新
+4. 使用 Seafile 账号登录（如 `admin@intranet.local` / `admin123456`）
+5. 确认登录成功 — 用户以提交者角色创建到本地数据库
+6. 退出并重新登录 — 确认用户资料（邮箱、显示名）已更新
+7. 使用错误密码登录 — 应该失败
+8. 确认管理员仍通过本地数据库登录（不走 Seafile API）
+9. 以管理员进入用户管理 — 确认 Seafile 认证用户显示"Seafile"标签
+10. 尝试修改 Seafile 用户的密码 — 应显示"密码由 Seafile 管理"的提示
+
+#### 16c：`ldap` 模式
+
+> 需要真实的 LDAP/AD 服务器，默认 Docker 测试环境无法测试。
+
+1. 设置 `AUTH_METHOD=ldap` 并配置 LDAP 参数
+2. 确认 LDAP 用户可使用 AD 凭据登录
+3. 确认角色根据 LDAP 组映射
+4. 确认管理员仍通过本地数据库登录
+
+**验证点**：
+- ✅ `local` 模式：所有用户通过本地数据库认证
+- ✅ `seafile` 模式：非管理员用户通过 Seafile API 认证，管理员使用本地数据库
+- ✅ `seafile` 模式：首次登录以提交者角色创建用户
+- ✅ `seafile` 模式：修改密码页显示"密码由 Seafile 管理"提示
+- ✅ `ldap` 模式：非管理员用户通过 LDAP 认证，管理员使用本地数据库
+- ✅ 登录页提示文字反映当前认证模式
+
 ## 常用命令
 
 ```bash

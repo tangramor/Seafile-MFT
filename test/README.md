@@ -599,6 +599,52 @@ docker compose logs seafile-mft 2>&1 | grep -i "email\|reviewer" | tail -10
 - ✅ Tooltip is not obscured by page elements (z-index layering)
 - ✅ Tooltip closes when mouse leaves the icon
 
+---
+
+### Test 16: Authentication Modes
+
+**Objective**: Verify that all three `AUTH_METHOD` modes work correctly.
+
+**Prerequisites**: The test environment defaults to `AUTH_METHOD=local`. Testing `seafile` mode requires the internal Seafile container to be running.
+
+#### 16a: `local` Mode (Default)
+
+1. Ensure `.env` has `AUTH_METHOD=local` (or unset — local is the default)
+2. Log in with the admin account (local DB)
+3. Create a local user in User Management
+4. Log in with the new user — should succeed
+5. Verify the login page shows a generic login hint (not LDAP-specific)
+
+#### 16b: `seafile` Mode
+
+1. Set `AUTH_METHOD=seafile` and `AUTH_SEAFILE=intranet` in `.env`
+2. Restart MFT: `docker compose restart seafile-mft`
+3. Verify the login page hint text updates accordingly
+4. Log in with a Seafile account (e.g., `admin@intranet.local` / `admin123456`)
+5. Verify login succeeds — the user is created in the local DB with submitter role
+6. Log out and log in again — verify profile (email, display name) is updated
+7. Try logging in with an incorrect password — should fail
+8. Verify admin still logs in via local DB (not Seafile API)
+9. As admin, go to User Management — verify the Seafile-authenticated user has a "Seafile" badge
+10. Try changing the Seafile user's password — should show a notice that passwords are managed by Seafile
+
+#### 16c: `ldap` Mode
+
+> Requires a real LDAP/AD server. Not testable in the default Docker test environment.
+
+1. Set `AUTH_METHOD=ldap` and configure LDAP settings
+2. Verify LDAP users can log in with their AD credentials
+3. Verify roles are mapped from LDAP groups
+4. Verify admin still logs in via local DB
+
+**Verification points**:
+- ✅ `local` mode: all users authenticate via local DB
+- ✅ `seafile` mode: non-admin users authenticate via Seafile API, admin uses local DB
+- ✅ `seafile` mode: first login creates user with submitter role
+- ✅ `seafile` mode: password change page shows "managed by Seafile" notice
+- ✅ `ldap` mode: non-admin users authenticate via LDAP, admin uses local DB
+- ✅ Login page hint text reflects the current auth mode
+
 ## Common Commands
 
 ```bash

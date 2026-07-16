@@ -31,7 +31,7 @@ flowchart TD
 | Feature | Description |
 |---------|-------------|
 | 🔍 **Smart File Detection** | Auto-detect Seafile version and edition (Community/Pro). Pro >= 7.0 uses real-time Webhook; Community or older versions use polling (directory traversal + mtime comparison). Manual override available. |
-| 🔐 **LDAP Authentication** | LDAP login with role mapping via AD groups (admin / reviewer / submitter) |
+| 🔐 **Multi-Auth Support** | Three authentication modes via `AUTH_METHOD`: `local` (local accounts only), `ldap` (LDAP + local admin fallback), `seafile` (Seafile API token auth). Admin always uses local auth. |
 | 👥 **Local Accounts** | Built-in local user management: admin can create, edit, enable/disable users, assign roles, reset passwords, and delete users |
 | 🔑 **Password Management** | Users can change their own password; admins can reset and delete other users' accounts |
 | 👤 **Role-Based Access** | Submitter (upload + view own submissions), Reviewer (review all tasks + audit log), Admin (review + user management + all permissions) |
@@ -112,7 +112,10 @@ uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 | **Review** | | |
 | `REVIEWER_EMAILS` | Reviewer email addresses (comma-separated) | — |
 | `REVIEW_TOKEN_EXPIRE_HOURS` | Validity period of email approval links | `72` |
-| **LDAP Auth** | Leave `LDAP_HOST` empty to use local accounts only | |
+| **Authentication** | | |
+| `AUTH_METHOD` | Auth mode: `local` / `ldap` / `seafile` | `local` |
+| `AUTH_SEAFILE` | Which Seafile to verify against (only when `AUTH_METHOD=seafile`): `intranet` / `extranet` | `intranet` |
+| **LDAP Auth** | Only used when `AUTH_METHOD=ldap` | |
 | `LDAP_HOST` | LDAP server address | — |
 | `LDAP_PORT` | LDAP port | `389` |
 | `LDAP_USE_SSL` | Use LDAPS | `false` |
@@ -230,6 +233,42 @@ The system traverses the internal library directory every `POLL_INTERVAL_SECONDS
 
 > **Why directory traversal instead of commit diffs?** Seafile 6.x returns 404 for both `GET /api2/repos/{id}/commits/{commit_id}/` and `GET /api2/repos/{id}/history/{commit_id}/`, making it impossible to get per-commit file changes. Directory traversal + mtime comparison is the most reliable approach compatible with all versions.
 
+## Authentication Modes
+
+The system supports three authentication methods, controlled by the `AUTH_METHOD` environment variable:
+
+| Mode | Description | Admin Login | User Login |
+|------|-------------|-------------|------------|
+| `local` | Local accounts only | Local DB | Local DB |
+| `ldap` | LDAP primary with local fallback | Local DB | LDAP (falls back to local on failure) |
+| `seafile` | Seafile API token authentication | Local DB | Seafile `POST /api2/auth-token/` |
+
+> **Admin always authenticates locally** regardless of `AUTH_METHOD`. This ensures admin access is never blocked by LDAP or Seafile server outages.
+
+### `local` Mode
+
+All users authenticate against the local database. The admin creates user accounts and sets initial passwords. Users can change their own password via the Change Password page.
+
+### `ldap` Mode
+
+- Non-admin users authenticate via LDAP (AD). On success, user info (email, display name, role) is synced to the local DB.
+- If LDAP authentication fails, the system falls back to local password verification (useful for pre-created local accounts).
+- LDAP group membership determines the user's role:
+  - Member of `LDAP_ADMIN_GROUP` → admin
+  - Member of `LDAP_REVIEWER_GROUP` → reviewer
+  - Others → submitter
+- Roles are refreshed on every login.
+
+### `seafile` Mode
+
+- Non-admin users authenticate via the Seafile API: `POST /api2/auth-token/` with username and password. If a token is returned, authentication succeeds.
+- Use `AUTH_SEAFILE` to select which Seafile instance to verify against:
+  - `intranet` — uses `INTRANET_SEAFILE_URL`
+  - `extranet` — uses `EXTRANET_SEAFILE_URL`
+- On first login, the user is created in the local DB with the submitter role. Admins can adjust roles in the user management page.
+- On subsequent logins, the system attempts to fetch the user's profile (`GET /api/v2.1/user/`) to update email and display name.
+- Password changes are not available for Seafile-authenticated users — passwords must be changed on the Seafile server.
+
 ## User Roles & Permissions
 
 | Role | Permissions |
@@ -238,7 +277,7 @@ The system traverses the internal library directory every `POLL_INTERVAL_SECONDS
 | **Reviewer** | Review all pending tasks (approve/reject), download synced external files |
 | **Admin** | Submitter + Reviewer + User management (create/edit/disable/change roles) + View all tasks |
 
-LDAP user roles are mapped via AD groups: members of `LDAP_ADMIN_GROUP` become admins, members of `LDAP_REVIEWER_GROUP` become reviewers, others become submitters. Roles are refreshed on every login.
+LDAP user roles are mapped via AD groups: members of `LDAP_ADMIN_GROUP` become admins, members of `LDAP_REVIEWER_GROUP` become reviewers, others become submitters. Roles are refreshed on every login. Seafile-auth users default to submitter role on first login; admins can adjust roles in the user management page.
 
 ## Web Interface
 
@@ -287,7 +326,7 @@ seafile-MFT/
 │   ├── main.py              # FastAPI entry point, lifecycle management, auto detection mode
 │   ├── config.py            # Global configuration (dual SMTP, LDAP, detection mode, etc.)
 │   ├── models.py            # Database models (User / UserSession / ReviewTask / PollerState / AuditLog)
-│   ├── auth.py              # LDAP auth, session management, permission dependencies, local user CRUD
+│   ├── auth.py              # Multi-auth (local/LDAP/Seafile), session management, permission dependencies, local user CRUD
 │   ├── audit.py             # Audit logging module (14 action types, integrated across all modules)
 │   ├── portal.py            # Web route handlers (login/upload/review board/downloads/user management/audit log)
 │   ├── review.py            # Email token-based approval link handling
@@ -349,6 +388,7 @@ sequenceDiagram
 ## Extension Ideas
 
 - ✅ **Audit log** — Implemented! Records all operations (task creation, approval, user management, file transfers, etc.) with filtering and pagination.
+- ✅ **Seafile auth** — Implemented! Users can now authenticate directly via Seafile API (`AUTH_METHOD=seafile`), in addition to local and LDAP modes.
 - **Multi-library mapping**: Modify poller/webhook modules to support multiple internal libraries mapped to different external libraries
 - **Approval rules**: Auto-approve or require manual review based on file type, size, etc.
 - **Multi-reviewer**: Implement countersign (all must approve) or or-sign (anyone can approve)
