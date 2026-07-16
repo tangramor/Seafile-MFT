@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     # "local"   → 仅使用本地账密登录
     # "ldap"    → admin 使用本地账号，其他用户使用 LDAP 认证（默认）
     # "seafile" → admin 使用本地账号，其他用户通过 Seafile API /api2/auth-token/ 认证
-    auth_method: str = "local"
+    auth_method: str = "seafile"
 
     # ── Seafile 认证目标（仅 auth_method=seafile 时生效）
     # "intranet" → 使用内网 Seafile 验证
