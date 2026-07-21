@@ -41,6 +41,19 @@ wait_for_seafile() {
         if curl -sf "${url}/api2/server-info/" > /dev/null 2>&1; then
             local ver=$(curl -sf "${url}/api2/server-info/" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('version','?'))" 2>/dev/null || echo "?")
             echo_info "$name 已就绪 (Seafile ${ver})"
+
+            # 内网
+            docker exec seafile-intranet sed -i \
+                -e 's#^SERVICE_URL = ".*"#SERVICE_URL = "http://localhost:8001"#' \
+                -e "s#^FILE_SERVER_ROOT = '.*'#FILE_SERVER_ROOT = 'http://localhost:8001/seafhttp'#" \
+                /shared/seafile/conf/seahub_settings.py
+
+            # 外网（端口 8002）
+            docker exec seafile-extranet sed -i \
+                -e 's#^SERVICE_URL = ".*"#SERVICE_URL = "http://localhost:8002"#' \
+                -e "s#^FILE_SERVER_ROOT = '.*'#FILE_SERVER_ROOT = 'http://localhost:8002/seafhttp'#" \
+                /shared/seafile/conf/seahub_settings.py
+
             return 0
         fi
         sleep 5
