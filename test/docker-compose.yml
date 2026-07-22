@@ -101,7 +101,6 @@ services:
       - INIT_SEAFILE_ADMIN_EMAIL=admin@intranet.local
       - INIT_SEAFILE_ADMIN_PASSWORD=admin123456
       - SEAFILE_SERVER_HOSTNAME=intranet.local
-      - SEAFILE_SERVER_PROTOCOL=http
     depends_on:
       seafile-intranet-db:
         condition: service_healthy
@@ -174,7 +173,6 @@ services:
       - INIT_SEAFILE_ADMIN_EMAIL=admin@extranet.local
       - INIT_SEAFILE_ADMIN_PASSWORD=admin123456
       - SEAFILE_SERVER_HOSTNAME=extranet.local
-      - SEAFILE_SERVER_PROTOCOL=http
     depends_on:
       seafile-extranet-db:
         condition: service_healthy
@@ -208,12 +206,12 @@ services:
 
       # ── 内网 Seafile ──
       - INTRANET_SEAFILE_URL=http://intranet.local
-      - INTRANET_SEAFILE_TOKEN=${INTRANET_TOKEN:-}
+      - INTRANET_SEAFILE_TOKEN=${INTRANET_SEAFILE_TOKEN:-}
       - INTRANET_REPO_ID=${INTRANET_REPO_ID:-}
 
       # ── 外网 Seafile ──
       - EXTRANET_SEAFILE_URL=http://extranet.local
-      - EXTRANET_SEAFILE_TOKEN=${EXTRANET_TOKEN:-}
+      - EXTRANET_SEAFILE_TOKEN=${EXTRANET_SEAFILE_TOKEN:-}
       - EXTRANET_REPO_ID=${EXTRANET_REPO_ID:-}
 
       # ── 检测模式 ──

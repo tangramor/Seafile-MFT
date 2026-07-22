@@ -245,11 +245,14 @@ cat > "${SCRIPT_DIR}/.env" << EOF
 # Seafile MFT 测试环境 - 自动生成的配置
 # 生成时间: $(date '+%Y-%m-%d %H:%M:%S')
 
-INTRANET_TOKEN=${INTRANET_TOKEN}
+INTRANET_SEAFILE_TOKEN=${INTRANET_TOKEN}
 INTRANET_REPO_ID=${INTRANET_REPO_ID}
-EXTRANET_TOKEN=${EXTRANET_TOKEN}
+EXTRANET_SEAFILE_TOKEN=${EXTRANET_TOKEN}
 EXTRANET_REPO_ID=${EXTRANET_REPO_ID}
 EOF
 
 echo_info ".env 文件已写入: ${SCRIPT_DIR}/.env"
 echo_info "MFT 已启动运行中，访问 http://localhost:8081 即可测试"
+
+# ── 重启 MFT 加载配置 ───────────────────────────────────────
+docker compose up -d seafile-mft

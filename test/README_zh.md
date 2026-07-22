@@ -146,7 +146,7 @@ docker compose up -d                    # 启动所有服务
 # 等待 Seafile 健康检查通过（约 2-3 分钟）
 docker compose ps                       # 确认所有服务为 healthy
 ./setup.sh                              # 运行初始化脚本
-docker compose up -d seafile-mft        # 重启 MFT 加载配置
+#docker compose up -d seafile-mft        # 重启 MFT 加载配置
 ```
 
 确认 MFT 正常运行：
