@@ -252,7 +252,8 @@ EXTRANET_REPO_ID=${EXTRANET_REPO_ID}
 EOF
 
 echo_info ".env 文件已写入: ${SCRIPT_DIR}/.env"
-echo_info "MFT 已启动运行中，访问 http://localhost:8081 即可测试"
 
 # ── 重启 MFT 加载配置 ───────────────────────────────────────
 docker compose up -d seafile-mft
+
+echo_info "MFT 已重启动运行中，访问 http://localhost:8081 即可测试"
