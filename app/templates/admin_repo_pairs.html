@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}{{ _("配对仓库 · MFT 审核系统") }}{% endblock %}
+
+{% block content %}
+<h2 style="font-size:20px;font-weight:700;margin-bottom:24px;">🔗 {{ _("配对仓库管理") }}</h2>
+
+{% if msg %}
+<div class="alert alert-{{ msg_type or 'info' }}">{{ _(msg) if msg else '' }}</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-title">➕ {{ _("新建配对仓库") }}</div>
+  <p style="font-size:13px;color:#666;margin-bottom:16px;">
+    {{ _("填写一个配对名称，系统会在内网与外网 Seafile 各确保存在一个同名仓库（不存在则自动创建）。配对即：内网该仓库的文件审批通过后，自动传送到对应的外网仓库。") }}
+  </p>
+  <form method="post" action="/admin/repo-pairs/create" class="row" style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;">
+    <div class="form-group" style="flex:1;min-width:260px;margin-bottom:0;">
+      <label class="form-label">{{ _("配对名称（同时作为内外网仓库名）") }}</label>
+      <input type="text" name="name" class="form-control" placeholder="{{ _('如：财务部-合同') }}" required>
+    </div>
+    <div class="form-group" style="flex:1;min-width:220px;margin-bottom:0;">
+      <label class="form-label">{{ _("内网仓库 ID（可选）") }}</label>
+      <input type="text" name="intranet_repo_id" class="form-control" placeholder="{{ _('如：a1b2c3d4…') }}">
+    </div>
+    <div class="form-group" style="flex:1;min-width:220px;margin-bottom:0;">
+      <label class="form-label">{{ _("外网仓库 ID（可选）") }}</label>
+      <input type="text" name="extranet_repo_id" class="form-control" placeholder="{{ _('如：e5f6g7h8…') }}">
+    </div>
+    <button type="submit" class="btn btn-primary">🔗 {{ _("创建配对") }}</button>
+  </form>
+  <p style="font-size:12px;color:#888;margin-top:12px;">
+    {{ _("若您已在内网与外网 Seafile 分别建有现成的配对仓库，可在此直接填入两者的仓库 ID，系统将复用而不再自动创建。两个 ID 需同时填写，留空则按名称自动创建。") }}
+  </p>
+</div>
+
+<div class="card">
+  <div class="card-title">📋 {{ _("已配置的配对") }}</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>{{ _("名称") }}</th>
+          <th>{{ _("内网仓库 ID") }}</th>
+          <th>{{ _("外网仓库 ID") }}</th>
+          <th>{{ _("状态") }}</th>
+          <th>{{ _("操作") }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in pairs %}
+        <tr>
+          <td><strong>{{ p.name }}</strong></td>
+          <td><code style="font-size:12px;">{{ p.intranet_repo_id }}</code></td>
+          <td><code style="font-size:12px;">{{ p.extranet_repo_id }}</code></td>
+          <td>
+            {% if p.is_active %}
+            <span class="badge badge-success">{{ _("启用中") }}</span>
+            {% else %}
+            <span class="badge badge-muted">{{ _("已停用") }}</span>
+            {% endif %}
+          </td>
+          <td style="white-space:nowrap;">
+            <form method="post" action="/admin/repo-pairs/{{ p.id }}/toggle" style="display:inline;">
+              <button type="submit" class="btn btn-sm btn-outline">
+                {% if p.is_active %}{{ _("停用") }}{% else %}{{ _("启用") }}{% endif %}
+              </button>
+            </form>
+            <form method="post" action="/admin/repo-pairs/{{ p.id }}/delete" style="display:inline;"
+                  onsubmit="return confirm('{{ _("确认删除该配对？") }}');">
+              <button type="submit" class="btn btn-sm btn-danger">{{ _("删除") }}</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" style="text-align:center;color:#999;">{{ _("暂无配对仓库") }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

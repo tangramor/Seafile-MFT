@@ -16,10 +16,25 @@
 
   <form method="post" action="/my/upload" enctype="multipart/form-data" id="uploadForm">
     <div class="form-group">
+      <label class="form-label">{{ _("目标仓库配对") }}</label>
+      {% if pairs %}
+      <select name="repo_pair_id" class="form-control" required>
+        {% for p in pairs %}
+        <option value="{{ p.id }}">{{ p.name }}{% if not p.is_active %}（{{ _("已停用") }}）{% endif %}</option>
+        {% endfor %}
+      </select>
+      <p style="font-size:12px;color:#888;margin-top:6px;">{{ _("文件将上传到该配对的内网仓库，审批通过后自动同步至对应的外网仓库。") }}</p>
+      {% else %}
+      <div class="alert alert-warning">{{ _("您当前未被分配到任何仓库分组，无法上传文件。请联系管理员。") }}</div>
+      {% endif %}
+    </div>
+
+    <div class="form-group">
       <label class="form-label">{{ _("目标路径（外网 Seafile 目录，留空默认根目录）") }}</label>
       <input type="text" name="target_path" class="form-control" placeholder="{{ _('如：/项目文档/2024') }}" value="/">
     </div>
 
+    {% if pairs %}
     <div class="form-group">
       <label class="form-label">{{ _("选择文件") }}</label>
       <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
@@ -38,6 +53,7 @@
     <button type="submit" class="btn btn-primary" id="submitBtn">
       ⬆️ {{ _("提交审核申请") }}
     </button>
+    {% endif %}
   </form>
 </div>
 {% endblock %}

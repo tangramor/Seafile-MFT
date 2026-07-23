@@ -30,7 +30,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from .config import get_settings
-from .models import ReviewTask, ReviewStatus, PollerState, get_db
+from .models import ReviewTask, ReviewStatus, PollerState, RepoPair, get_db
 from .email_notify import send_review_notification
 from .audit import log_action
 
@@ -128,154 +128,173 @@ class SeafilePoller:
 
 async def poll_once():
     """
-    执行一次轮询：
-    1. 从数据库读取上次处理的 commit_id 和 ctime
-    2. 获取 Seafile 最新 commits，找出新 commit
-    3. 遍历仓库所有文件，找出 mtime >= last_ctime 的文件
-    4. 为每个新增/修改文件创建审核任务
-    5. 更新数据库中的 last_commit_id
+    执行一次轮询：遍历所有启用中的配对仓库，分别检测新增/修改文件。
     """
     settings = get_settings()
     poller = SeafilePoller(settings.intranet_seafile_url, settings.intranet_seafile_token)
 
     with get_db() as db:
-        # 1. 读取上次处理进度
-        last_commit_id = _get_last_commit_id(db, settings.intranet_repo_id)
-
-        try:
-            # 2. 拉取最新 commits
-            commits = await poller.list_commits(settings.intranet_repo_id)
-        except Exception as e:
-            logger.error(f"[Poller] 拉取 commits 失败: {type(e).__name__}: {e}")
+        pairs = db.query(RepoPair).filter(RepoPair.is_active == True).all()
+        if not pairs:
+            logger.info("[Poller] 当前没有启用中的配对仓库，跳过本轮轮询")
             return
-
-        if not commits:
-            return
-
-        # 首次运行：记录当前最新 commit，不产生审核任务
-        if last_commit_id is None:
-            newest_id = commits[0]["id"]
-            _save_last_commit_id(db, settings.intranet_repo_id, newest_id)
-            db.commit()
-            logger.info(f"[Poller] 首次运行，记录起始 commit: {newest_id[:8]}，后续新上传文件将触发审核")
-            return
-
-        # 3. 找出 last_commit_id 之后的新 commit（列表是倒序的）
-        new_commits = []
-        for c in commits:
-            if c["id"] == last_commit_id:
-                break
-            new_commits.append(c)
-
-        if not new_commits:
-            return  # 没有新内容
-
-        logger.info(f"[Poller] 发现 {len(new_commits)} 个新 commit，开始处理...")
-
-        # 4. 计算需要检查的时间范围
-        # new_commits 是倒序的，最旧的新 commit 时间作为下限
-        oldest_new_commit = new_commits[-1]
-        # ctime 可能是 int（Unix 时间戳）或 str
-        oldest_ctime = oldest_new_commit.get("ctime", 0)
-        if isinstance(oldest_ctime, str):
+        logger.info(f"[Poller] 本轮需轮询 {len(pairs)} 个配对仓库")
+        for pair in pairs:
             try:
-                oldest_ctime = int(oldest_ctime)
-            except Exception:
-                oldest_ctime = 0
+                await _poll_single_repo(db, poller, pair, settings)
+            except Exception as e:
+                logger.error(f"[Poller] 配对「{pair.name}」轮询出错: {type(e).__name__}: {e}")
 
-        # 上次 commit 的时间（用于筛选文件，稍微往前一点避免时间边界问题）
-        last_commit_data = next((c for c in commits if c["id"] == last_commit_id), None)
-        last_ctime = 0
-        if last_commit_data:
-            last_ctime = last_commit_data.get("ctime", 0)
-            if isinstance(last_ctime, str):
-                try:
-                    last_ctime = int(last_ctime)
-                except Exception:
-                    last_ctime = 0
 
-        # 使用最旧新 commit 时间（减1秒容错）作为文件筛选基准
-        filter_after_ts = max(0, oldest_ctime - 1)
+async def _poll_single_repo(db: Session, poller: SeafilePoller, pair: RepoPair, settings):
+    """
+    对单个配对仓库（其内网 repo）执行一次轮询：
+    1. 从数据库读取上次处理的 commit_id 和 ctime
+    2. 获取 Seafile 最新 commits，找出新 commit
+    3. 遍历仓库所有文件，找出 mtime >= last_ctime 的文件
+    4. 为每个新增/修改文件创建审核任务（归属该配对）
+    5. 更新数据库中的 last_commit_id
+    """
+    repo_id = pair.intranet_repo_id
 
-        logger.info(f"[Poller] 筛选 mtime >= {filter_after_ts} 的文件 (最旧新 commit ctime={oldest_ctime})")
+    # 1. 读取上次处理进度
+    last_commit_id = _get_last_commit_id(db, repo_id)
 
-        # 5. 遍历仓库所有文件
-        try:
-            all_files = await poller.list_all_files(settings.intranet_repo_id)
-        except Exception as e:
-            logger.error(f"[Poller] 遍历仓库文件失败: {e}")
-            # 即使获取文件失败，也更新进度避免死循环
-            latest_commit_id = new_commits[0]["id"]
-            _save_last_commit_id(db, settings.intranet_repo_id, latest_commit_id)
-            db.commit()
-            return
+    try:
+        # 2. 拉取最新 commits
+        commits = await poller.list_commits(repo_id)
+    except Exception as e:
+        logger.error(f"[Poller] 拉取 commits 失败: {type(e).__name__}: {e}")
+        return
 
-        logger.info(f"[Poller] 仓库共 {len(all_files)} 个文件，开始筛选...")
+    if not commits:
+        return
 
-        expire_at = datetime.utcnow() + timedelta(hours=settings.review_token_expire_hours)
-
-        # 取最新 commit 的上传者信息（作为默认 creator）
-        latest_new_commit = new_commits[0]
-        creator = latest_new_commit.get("creator_name", latest_new_commit.get("creator", "unknown"))
-        creator_email = latest_new_commit.get("creator", "")
-        if "@" not in creator_email:
-            creator_email = ""
-
-        # 6. 筛选新增/修改的文件（mtime 在最旧新 commit 时间之后）
-        new_files = [f for f in all_files if f.get("mtime", 0) >= filter_after_ts]
-
-        if new_files:
-            logger.info(f"[Poller] 筛选到 {len(new_files)} 个新增/修改文件")
-        else:
-            logger.info(f"[Poller] 未发现新增/修改文件（可能是删除/重命名操作）")
-
-        for file_info in new_files:
-            file_path = file_info["path"]
-            file_name = file_info["name"]
-
-            # 使用最新 commit id 关联
-            commit_id = latest_new_commit["id"]
-
-            # 去重1：同路径+commit_id 不重复创建任务
-            if _task_exists(db, settings.intranet_repo_id, file_path, commit_id):
-                logger.info(f"[Poller] 跳过重复任务: {file_path}")
-                continue
-
-            # 去重2：同一文件路径已有审核记录（不限 commit_id）
-            # 防止 Seafile 内部操作（浏览文件库、生成缩略图等）创建新 commit
-            # 导致已处理的文件被误判为"新文件"重复提交审核
-            if _file_already_processed(db, settings.intranet_repo_id, file_path):
-                continue
-
-            token = secrets.token_urlsafe(32)
-            task = ReviewTask(
-                token=token,
-                file_name=file_name,
-                file_path=file_path,
-                file_size=file_info.get("size", 0),
-                repo_id=settings.intranet_repo_id,
-                commit_id=commit_id,
-                uploader=creator,
-                uploader_email=creator_email,
-                status=ReviewStatus.PENDING,
-                expire_at=expire_at,
-            )
-            db.add(task)
-            db.flush()
-            db.refresh(task)
-            logger.info(f"[Poller] 创建审核任务 #{task.id}: {file_path} (mtime={file_info.get('mtime')})")
-
-            log_action("system", "task_created", "review_task", task.id,
-                       {"file_name": file_name, "uploader": creator, "source": "poller"})
-
-            # 发送审批邮件（异步）
-            asyncio.create_task(send_review_notification(task))
-
-        # 7. 更新进度到最新 commit
-        latest_commit_id = new_commits[0]["id"]
-        _save_last_commit_id(db, settings.intranet_repo_id, latest_commit_id)
+    # 首次运行：记录当前最新 commit，不产生审核任务
+    if last_commit_id is None:
+        newest_id = commits[0]["id"]
+        _save_last_commit_id(db, repo_id, newest_id)
         db.commit()
-        logger.info(f"[Poller] 进度更新至 commit: {latest_commit_id[:8]}")
+        logger.info(f"[Poller][{pair.name}] 首次运行，记录起始 commit: {newest_id[:8]}，后续新上传文件将触发审核")
+        return
+
+    # 3. 找出 last_commit_id 之后的新 commit（列表是倒序的）
+    new_commits = []
+    for c in commits:
+        if c["id"] == last_commit_id:
+            break
+        new_commits.append(c)
+
+    if not new_commits:
+        return  # 没有新内容
+
+    logger.info(f"[Poller][{pair.name}] 发现 {len(new_commits)} 个新 commit，开始处理...")
+
+    # 4. 计算需要检查的时间范围
+    # new_commits 是倒序的，最旧的新 commit 时间作为下限
+    oldest_new_commit = new_commits[-1]
+    # ctime 可能是 int（Unix 时间戳）或 str
+    oldest_ctime = oldest_new_commit.get("ctime", 0)
+    if isinstance(oldest_ctime, str):
+        try:
+            oldest_ctime = int(oldest_ctime)
+        except Exception:
+            oldest_ctime = 0
+
+    # 上次 commit 的时间（用于筛选文件，稍微往前一点避免时间边界问题）
+    last_commit_data = next((c for c in commits if c["id"] == last_commit_id), None)
+    last_ctime = 0
+    if last_commit_data:
+        last_ctime = last_commit_data.get("ctime", 0)
+        if isinstance(last_ctime, str):
+            try:
+                last_ctime = int(last_ctime)
+            except Exception:
+                last_ctime = 0
+
+    # 使用最旧新 commit 时间（减1秒容错）作为文件筛选基准
+    filter_after_ts = max(0, oldest_ctime - 1)
+
+    logger.info(f"[Poller][{pair.name}] 筛选 mtime >= {filter_after_ts} 的文件 (最旧新 commit ctime={oldest_ctime})")
+
+    # 5. 遍历仓库所有文件
+    try:
+        all_files = await poller.list_all_files(repo_id)
+    except Exception as e:
+        logger.error(f"[Poller][{pair.name}] 遍历仓库文件失败: {e}")
+        # 即使获取文件失败，也更新进度避免死循环
+        latest_commit_id = new_commits[0]["id"]
+        _save_last_commit_id(db, repo_id, latest_commit_id)
+        db.commit()
+        return
+
+    logger.info(f"[Poller][{pair.name}] 仓库共 {len(all_files)} 个文件，开始筛选...")
+
+    expire_at = datetime.utcnow() + timedelta(hours=settings.review_token_expire_hours)
+
+    # 取最新 commit 的上传者信息（作为默认 creator）
+    latest_new_commit = new_commits[0]
+    creator = latest_new_commit.get("creator_name", latest_new_commit.get("creator", "unknown"))
+    creator_email = latest_new_commit.get("creator", "")
+    if "@" not in creator_email:
+        creator_email = ""
+
+    # 6. 筛选新增/修改的文件（mtime 在最旧新 commit 时间之后）
+    new_files = [f for f in all_files if f.get("mtime", 0) >= filter_after_ts]
+
+    if new_files:
+        logger.info(f"[Poller][{pair.name}] 筛选到 {len(new_files)} 个新增/修改文件")
+    else:
+        logger.info(f"[Poller][{pair.name}] 未发现新增/修改文件（可能是删除/重命名操作）")
+
+    for file_info in new_files:
+        file_path = file_info["path"]
+        file_name = file_info["name"]
+
+        # 使用最新 commit id 关联
+        commit_id = latest_new_commit["id"]
+
+        # 去重1：同路径+commit_id 不重复创建任务
+        if _task_exists(db, repo_id, file_path, commit_id):
+            logger.info(f"[Poller][{pair.name}] 跳过重复任务: {file_path}")
+            continue
+
+        # 去重2：同一文件路径已有审核记录（不限 commit_id）
+        # 防止 Seafile 内部操作（浏览文件库、生成缩略图等）创建新 commit
+        # 导致已处理的文件被误判为"新文件"重复提交审核
+        if _file_already_processed(db, repo_id, file_path):
+            continue
+
+        token = secrets.token_urlsafe(32)
+        task = ReviewTask(
+            token=token,
+            file_name=file_name,
+            file_path=file_path,
+            file_size=file_info.get("size", 0),
+            repo_id=repo_id,
+            repo_pair_id=pair.id,
+            commit_id=commit_id,
+            uploader=creator,
+            uploader_email=creator_email,
+            status=ReviewStatus.PENDING,
+            expire_at=expire_at,
+        )
+        db.add(task)
+        db.flush()
+        db.refresh(task)
+        logger.info(f"[Poller][{pair.name}] 创建审核任务 #{task.id}: {file_path} (mtime={file_info.get('mtime')})")
+
+        log_action("system", "task_created", "review_task", task.id,
+                   {"file_name": file_name, "uploader": creator, "source": "poller", "repo_pair_id": pair.id})
+
+        # 发送审批邮件（异步）
+        asyncio.create_task(send_review_notification(task))
+
+    # 7. 更新进度到最新 commit
+    latest_commit_id = new_commits[0]["id"]
+    _save_last_commit_id(db, repo_id, latest_commit_id)
+    db.commit()
+    logger.info(f"[Poller][{pair.name}] 进度更新至 commit: {latest_commit_id[:8]}")
 
 
 def _get_last_commit_id(db: Session, repo_id: str) -> Optional[str]:
@@ -331,7 +350,7 @@ async def start_polling_loop():
     """
     settings = get_settings()
     interval = settings.poll_interval_seconds
-    logger.info(f"[Poller] 后台轮询已启动，间隔 {interval} 秒，监控 repo: {settings.intranet_repo_id}")
+    logger.info(f"[Poller] 后台轮询已启动，间隔 {interval} 秒，监控所有启用中的配对仓库")
 
     while True:
         try:

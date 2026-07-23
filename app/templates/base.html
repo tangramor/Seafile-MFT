@@ -334,6 +334,12 @@
     <a href="/admin/users" class="nav-item {% if '/admin/users' in request.url.path %}active{% endif %}">
       <span class="icon">👥</span> {{ _("用户管理") }}
     </a>
+    <a href="/admin/repo-pairs" class="nav-item {% if '/admin/repo-pairs' in request.url.path %}active{% endif %}">
+      <span class="icon">🔗</span> {{ _("配对仓库") }}
+    </a>
+    <a href="/admin/groups" class="nav-item {% if '/admin/groups' in request.url.path %}active{% endif %}">
+      <span class="icon">🗃️</span> {{ _("用户分组") }}
+    </a>
     <a href="/admin/tasks" class="nav-item {% if '/admin/tasks' in request.url.path %}active{% endif %}">
       <span class="icon">🗂️</span> {{ _("所有任务") }}
     </a>

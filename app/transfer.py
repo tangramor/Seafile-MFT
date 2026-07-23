@@ -21,7 +21,7 @@ from urllib.parse import urlparse, urlunparse
 import httpx
 
 from .config import get_settings
-from .models import ReviewTask
+from .models import ReviewTask, RepoPair, get_db
 
 
 class SeafileClient:
@@ -125,6 +125,63 @@ class SeafileClient:
                 resp = await client.post(url, params=params, data=data, headers=self.headers)
                 resp.raise_for_status()
 
+    async def list_repos(self) -> list:
+        """列出当前账号下的所有仓库"""
+        url = f"{self.base_url}/api2/repos/"
+        async with httpx.AsyncClient(timeout=30, verify=False) as client:
+            resp = await client.get(url, headers=self.headers)
+            resp.raise_for_status()
+            data = resp.json()
+            if isinstance(data, dict):
+                return data.get("repos", [])
+            return data
+
+    async def repo_exists(self, repo_id: str) -> bool:
+        """
+        校验指定 repo_id 的仓库是否存在于该 Seafile 实例。
+
+        Returns:
+            bool: 存在返回 True，不存在（404）返回 False。
+        Raises:
+            对其他非 2xx/404 状态（如 Token 鉴权失败）抛出 RuntimeError。
+        """
+        url = f"{self.base_url}/api2/repos/{repo_id}/"
+        async with httpx.AsyncClient(timeout=30, verify=False) as client:
+            resp = await client.get(url, headers=self.headers)
+            if resp.status_code == 200:
+                return True
+            if resp.status_code == 404:
+                return False
+            if resp.status_code in (401, 403):
+                raise RuntimeError(
+                    f"Seafile 鉴权失败（HTTP {resp.status_code}），请检查 Token 是否有效"
+                )
+            raise RuntimeError(
+                f"校验仓库存在性失败（HTTP {resp.status_code}）: {resp.text[:200]}"
+            )
+
+    async def ensure_repo(self, name: str) -> str:
+        """
+        确保指定名称的仓库存在，返回其 repo_id。
+        若已存在同名仓库则直接返回其 id；否则新建并返回。
+        """
+        repos = await self.list_repos()
+        for r in repos:
+            if r.get("name") == name:
+                return r.get("id") or r.get("repo_id")
+
+        # 不存在则创建
+        url = f"{self.base_url}/api2/repos/"
+        data = {"name": name, "desc": f"MFT 配对仓库 {name}"}
+        async with httpx.AsyncClient(timeout=30, verify=False) as client:
+            resp = await client.post(url, data=data, headers=self.headers)
+            resp.raise_for_status()
+            result = resp.json()
+            repo_id = result.get("repo_id") or result.get("id")
+            if not repo_id:
+                raise RuntimeError(f"创建仓库失败，响应中无 repo_id：{result}")
+            return repo_id
+
 
 async def transfer_file_to_extranet(
     task: ReviewTask,
@@ -140,6 +197,16 @@ async def transfer_file_to_extranet(
     """
     settings = get_settings()
 
+    # 解析任务所属配对，确定内外网目标仓库
+    intranet_repo_id = task.repo_id
+    extranet_repo_id = settings.extranet_repo_id  # 兜底：无配对时用全局外网仓库
+    if task.repo_pair_id:
+        with get_db() as db:
+            pair = db.query(RepoPair).filter(RepoPair.id == task.repo_pair_id).first()
+            if pair:
+                intranet_repo_id = pair.intranet_repo_id
+                extranet_repo_id = pair.extranet_repo_id
+
     # 初始化内外网客户端
     intranet_client = SeafileClient(
         settings.intranet_seafile_url,
@@ -151,8 +218,8 @@ async def transfer_file_to_extranet(
     )
 
     try:
-        print(f"[Transfer] Downloading {task.file_path} from intranet repo {task.repo_id}...")
-        file_content = await intranet_client.download_file(task.repo_id, task.file_path)
+        print(f"[Transfer] Downloading {task.file_path} from intranet repo {intranet_repo_id}...")
+        file_content = await intranet_client.download_file(intranet_repo_id, task.file_path)
         print(f"[Transfer] Downloaded {len(file_content)} bytes")
 
         # 保持原始目录结构
@@ -161,11 +228,11 @@ async def transfer_file_to_extranet(
             target_dir = "/" + target_dir
 
         # 确保目标目录存在
-        await extranet_client.ensure_dir(settings.extranet_repo_id, target_dir)
+        await extranet_client.ensure_dir(extranet_repo_id, target_dir)
 
-        print(f"[Transfer] Uploading to extranet repo {settings.extranet_repo_id}, dir={target_dir}...")
+        print(f"[Transfer] Uploading to extranet repo {extranet_repo_id}, dir={target_dir}...")
         extranet_path = await extranet_client.upload_file(
-            settings.extranet_repo_id,
+            extranet_repo_id,
             task.file_name,
             file_content,
             target_dir=target_dir,

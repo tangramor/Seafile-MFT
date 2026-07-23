@@ -34,7 +34,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Request, HTTPException
 
 from .config import get_settings
-from .models import ReviewTask, ReviewStatus, get_db
+from .models import ReviewTask, ReviewStatus, RepoPair, get_db
 from .audit import log_action
 
 logger = logging.getLogger(__name__)
@@ -90,9 +90,14 @@ async def receive_webhook(request: Request):
 
     logger.info(f"[Webhook] 收到事件: event={event}, repo_id={repo_id[:8]}...")
 
-    # 只处理目标 repo 的 repo-update 事件
-    if event != "repo-update" or repo_id != settings.intranet_repo_id:
+    # 只处理已配置配对仓库（内网侧）的 repo-update 事件
+    with get_db() as db:
+        pairs = db.query(RepoPair).filter(RepoPair.is_active == True).all()
+    valid_ids = {p.intranet_repo_id: p.id for p in pairs}
+    if event != "repo-update" or repo_id not in valid_ids:
         return {"status": "ignored", "reason": "not target repo or event"}
+
+    repo_pair_id = valid_ids[repo_id]
 
     changed_files = payload.get("changed_files", {})
     added_files = changed_files.get("added", [])
@@ -140,6 +145,7 @@ async def receive_webhook(request: Request):
                 file_path=file_path,
                 file_size=0,  # Webhook payload 不含文件大小
                 repo_id=repo_id,
+                repo_pair_id=repo_pair_id,
                 commit_id=commit_id,
                 uploader=operator,
                 uploader_email=operator if "@" in operator else "",

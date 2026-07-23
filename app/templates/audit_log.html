@@ -49,12 +49,20 @@
             'user_role_changed': ('🔄 ' + _("角色变更"), 'warning'),
             'user_enabled': ('✅ ' + _("启用用户"), 'success'),
             'user_disabled': ('🚫 ' + _("禁用用户"), 'danger'),
+            'repo_pair_created': ('🔗 ' + _("创建配对"), 'success'),
+            'repo_pair_toggled': ('🔀 ' + _("切换配对状态"), 'warning'),
+            'repo_pair_deleted': ('🗑️ ' + _("删除配对"), 'danger'),
+            'group_created': ('🗃️ ' + _("创建分组"), 'success'),
+            'group_deleted': ('🗑️ ' + _("删除分组"), 'danger'),
           } %}
           {% set al = action_labels.get(e.action, (e.action, 'info')) %}
           <span class="badge badge-{{ al[1] }}">{{ al[0] }}</span>
         </td>
         <td style="font-size:12px;color:var(--muted);">
-          {% if e.target_type == 'review_task' %}#{{ e.target_id }}{% else %}{{ _("用户") }}{% endif %}
+          {% if e.target_type == 'review_task' %}#{{ e.target_id }}
+          {% elif e.target_type == 'repo_pair' %}{{ _("配对") }} #{{ e.target_id }}
+          {% elif e.target_type == 'user_group' %}{{ _("分组") }} #{{ e.target_id }}
+          {% else %}{{ _("用户") }}{% endif %}
         </td>
         <td style="font-size:12px;max-width:320px;word-break:break-all;">
           {% set d = e.details_json %}

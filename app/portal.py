@@ -12,12 +12,15 @@ Portal 路由模块
 - /downloads                  外网：已通过文件下载列表
 - /downloads/{id}             外网：下载单个文件
 - /admin/users                管理员：用户列表
+- /admin/repo-pairs           管理员：配对仓库管理
+- /admin/groups               管理员：用户分组管理
 """
 import asyncio
 import logging
 import os
 import secrets
 from datetime import datetime, timedelta
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
@@ -44,7 +47,11 @@ from .auth import (
 from .config import get_settings
 from .email_notify import send_review_notification, send_result_notification
 from .i18n import _, get_locale
-from .models import ReviewStatus, ReviewTask, User, UserRole, get_db
+from .models import (
+    ReviewStatus, ReviewTask, User, UserRole,
+    RepoPair, UserGroup, UserGroupMember, GroupRepoPair,
+    get_accessible_pair_ids, get_db,
+)
 from .transfer import SeafileClient, transfer_file_to_extranet
 from .audit import log_action
 
@@ -61,6 +68,42 @@ STATUS_LABELS = {
     "transferred": ("已同步外网", "info"),
     "failed":      ("同步失败",  "danger"),
 }
+
+
+def _visible_pairs(db: Session, current_user: CurrentUser) -> List[RepoPair]:
+    """
+    返回当前用户可访问（可上传/可见）的配对仓库列表。
+    - 管理员：返回所有启用中的配对。
+    - 其他用户：返回所属分组挂载的配对（并集）中启用中的那些。
+    - 不属于任何分组的用户：返回空列表（看不到任何配对）。
+    """
+    accessible = get_accessible_pair_ids(db, current_user.user_id, current_user.is_admin)
+    if accessible is None:
+        return db.query(RepoPair).filter(RepoPair.is_active == True).order_by(RepoPair.id).all()
+    if not accessible:
+        return []
+    return (
+        db.query(RepoPair)
+        .filter(RepoPair.id.in_(accessible), RepoPair.is_active == True)
+        .order_by(RepoPair.id)
+        .all()
+    )
+
+
+def _apply_pair_filter(query, db: Session, current_user: CurrentUser):
+    """
+    对 ReviewTask 查询应用配对可见性隔离。
+    管理员不过滤；其他用户仅能看到所属分组配对下的任务。
+    不属于任何分组的用户：强制匹配不到任何记录（避免 IN () 非法 SQL）。
+    返回 (query, accessible_list_or_None)。
+    """
+    accessible = get_accessible_pair_ids(db, current_user.user_id, current_user.is_admin)
+    if accessible is not None:
+        if accessible:
+            query = query.filter(ReviewTask.repo_pair_id.in_(accessible))
+        else:
+            query = query.filter(ReviewTask.id == -1)
+    return query, accessible
 
 
 # ─────────────────────────────────────────────
@@ -165,15 +208,15 @@ async def dashboard(
 ):
     with get_db() as db:
         if current_user.is_reviewer:
-            pending_count = db.query(ReviewTask).filter(
-                ReviewTask.status == ReviewStatus.PENDING
-            ).count()
+            query = db.query(ReviewTask).filter(ReviewTask.status == ReviewStatus.PENDING)
+            query, _ = _apply_pair_filter(query, db, current_user)
+            pending_count = query.count()
             my_count = None
         else:
             pending_count = None
-            my_count = db.query(ReviewTask).filter(
-                ReviewTask.uploader == current_user.username
-            ).count()
+            query = db.query(ReviewTask).filter(ReviewTask.uploader == current_user.username)
+            query, _ = _apply_pair_filter(query, db, current_user)
+            my_count = query.count()
 
     return templates.TemplateResponse(
         "dashboard.html",
@@ -239,9 +282,11 @@ async def upload_page(
     request: Request,
     current_user: CurrentUser = Depends(require_login),
 ):
+    with get_db() as db:
+        pairs = _visible_pairs(db, current_user)
     return templates.TemplateResponse(
         "upload.html",
-        {"request": request, "user": current_user, "message": None},
+        {"request": request, "user": current_user, "message": None, "pairs": pairs},
     )
 
 
@@ -251,12 +296,32 @@ async def upload_submit(
     file: UploadFile = File(...),
     target_path: str = Form(default="/"),
     comment: str = Form(default=""),
+    repo_pair_id: int = Form(default=0),
     current_user: CurrentUser = Depends(require_login),
 ):
     """
-    接收前端上传的文件，直接写入内网 Seafile，然后创建审核任务。
+    接收前端上传的文件，写入内网 Seafile 的指定配对仓库，然后创建审核任务。
     """
     settings = get_settings()
+
+    # 解析并校验目标配对（必须在用户可见范围内）
+    with get_db() as db:
+        pairs = _visible_pairs(db, current_user)
+        allowed_ids = {p.id: p for p in pairs}
+        pair = allowed_ids.get(int(repo_pair_id)) if repo_pair_id else None
+        if pair is None:
+            return templates.TemplateResponse(
+                "upload.html",
+                {
+                    "request": request,
+                    "user": current_user,
+                    "pairs": pairs,
+                    "message": _("请选择有效的目标仓库配对"),
+                    "msg_type": "danger",
+                },
+            )
+        intranet_repo_id = pair.intranet_repo_id
+
     client = SeafileClient(settings.intranet_seafile_url, settings.intranet_seafile_token)
 
     # 规范化目标路径
@@ -269,16 +334,16 @@ async def upload_submit(
         file_name = file.filename or "unknown"
 
         # 确保目录存在
-        await client.ensure_dir(settings.intranet_repo_id, target_dir)
+        await client.ensure_dir(intranet_repo_id, target_dir)
 
         # 上传到内网 Seafile
         intranet_path = await client.upload_file(
-            settings.intranet_repo_id,
+            intranet_repo_id,
             file_name,
             content,
             target_dir=target_dir,
         )
-        logger.info(f"[Upload] {current_user.username} 上传文件: {intranet_path}")
+        logger.info(f"[Upload] {current_user.username} 上传文件: {intranet_path} (配对 {pair.name})")
     except Exception as e:
         logger.error(f"[Upload] 上传失败: {e}")
         return templates.TemplateResponse(
@@ -286,6 +351,7 @@ async def upload_submit(
             {
                 "request": request,
                 "user": current_user,
+                "pairs": pairs,
                 "message": _("上传失败：{error}", error=str(e)),
                 "msg_type": "danger",
             },
@@ -303,7 +369,8 @@ async def upload_submit(
             file_name=file_name,
             file_path=intranet_path,
             file_size=len(content),
-            repo_id=settings.intranet_repo_id,
+            repo_id=intranet_repo_id,
+            repo_pair_id=pair.id,
             commit_id="web-upload",
             uploader=current_user.username,
             uploader_email=uploader_email,
@@ -317,7 +384,7 @@ async def upload_submit(
         task_id = task.id
 
         log_action(current_user.username, "task_created", "review_task", task_id,
-                   {"file_name": file_name, "source": "web"},
+                   {"file_name": file_name, "source": "web", "repo_pair_id": pair.id},
                    ip_address=request.client.host if request.client else "")
 
         asyncio.create_task(send_review_notification(task))
@@ -328,6 +395,7 @@ async def upload_submit(
         {
             "request": request,
             "user": current_user,
+            "pairs": pairs,
             "message": _("✅ 文件已上传，审核申请 #{task_id} 已提交，审核完成后将通知您。", task_id=task_id),
             "msg_type": "success",
         },
@@ -355,6 +423,7 @@ async def review_board(
                 query = query.filter(ReviewTask.status == ReviewStatus(status))
             except ValueError:
                 pass
+        query, _ = _apply_pair_filter(query, db, current_user)
         total = query.count()
         tasks = query.offset(offset).limit(page_size).all()
 
@@ -461,6 +530,8 @@ async def download_list(
         # 提交者只看自己的文件
         if not current_user.is_reviewer:
             query = query.filter(ReviewTask.uploader == current_user.username)
+        # 非管理员按分组配对隔离
+        query, _ = _apply_pair_filter(query, db, current_user)
 
         total = query.count()
         tasks = query.offset(offset).limit(page_size).all()
@@ -485,6 +556,7 @@ async def download_file(
     current_user: CurrentUser = Depends(require_login),
 ):
     """代理下载：从外网 Seafile 获取文件后流式返回给客户端"""
+    settings = get_settings()
     with get_db() as db:
         task = db.query(ReviewTask).filter(ReviewTask.id == task_id).first()
         if not task or task.status != ReviewStatus.TRANSFERRED:
@@ -492,14 +564,25 @@ async def download_file(
         # 提交者只能下载自己的文件
         if not current_user.is_reviewer and task.uploader != current_user.username:
             raise HTTPException(status_code=403, detail=_("无权下载此文件"))
+        # 非管理员按分组配对隔离
+        accessible = get_accessible_pair_ids(db, current_user.user_id, current_user.is_admin)
+        if accessible is not None and task.repo_pair_id not in accessible:
+            raise HTTPException(status_code=403, detail=_("无权下载此文件"))
         file_path = task.extranet_file_path
         file_name = task.file_name
         repo_id_to_use = task.repo_id  # 保存一份，会话关闭后仍可用
 
+        # 解析外网目标仓库（优先用配对）
+        extranet_repo_id = settings.extranet_repo_id
+        if task.repo_pair_id:
+            pair = db.query(RepoPair).filter(RepoPair.id == task.repo_pair_id).first()
+            if pair:
+                extranet_repo_id = pair.extranet_repo_id
+
     settings = get_settings()
     client = SeafileClient(settings.extranet_seafile_url, settings.extranet_seafile_token)
     try:
-        content = await client.download_file(settings.extranet_repo_id, file_path)
+        content = await client.download_file(extranet_repo_id, file_path)
     except Exception as e:
         raise HTTPException(status_code=502, detail=_("从外网 Seafile 下载失败：{error}", error=str(e)))
 
@@ -602,6 +685,7 @@ async def admin_create_user(
 @router.post("/admin/users/{user_id}/role")
 async def admin_change_role(
     user_id: int,
+    request: Request,
     role: str = Form(...),
     current_user: CurrentUser = Depends(require_admin),
 ):
@@ -904,3 +988,290 @@ async def _transfer_and_notify(task_id: int):
         db.commit()
         db.refresh(task)
         await send_result_notification(task)
+
+
+# ─────────────────────────────────────────────
+# 管理员：配对仓库管理
+# ─────────────────────────────────────────────
+
+@router.get("/admin/repo-pairs", response_class=HTMLResponse)
+async def admin_repo_pairs(
+    request: Request,
+    current_user: CurrentUser = Depends(require_admin),
+):
+    msg = request.query_params.get("msg")
+    msg_type = request.query_params.get("msg_type", "success")
+    with get_db() as db:
+        pairs = db.query(RepoPair).order_by(RepoPair.id).all()
+    return templates.TemplateResponse(
+        "admin_repo_pairs.html",
+        {"request": request, "user": current_user, "pairs": pairs, "msg": msg, "msg_type": msg_type},
+    )
+
+
+@router.post("/admin/repo-pairs/create", response_class=HTMLResponse)
+async def admin_repo_pair_create(
+    request: Request,
+    name: str = Form(...),
+    intranet_repo_id: str = Form(default=""),
+    extranet_repo_id: str = Form(default=""),
+    current_user: CurrentUser = Depends(require_admin),
+):
+    """创建配对。
+
+    两种模式：
+    1. 留空仓库 ID：系统在内/外网 Seafile 各确保存在一个同名仓库（不存在则新建）。
+    2. 同时填写内/外网仓库 ID：直接复用用户已有的现成仓库（先校验存在性）。
+    """
+    name = (name or "").strip()
+    if not name:
+        return RedirectResponse(
+            "/admin/repo-pairs?msg=" + _("配对名称不能为空") + "&msg_type=danger", status_code=302)
+
+    in_id = (intranet_repo_id or "").strip()
+    ex_id = (extranet_repo_id or "").strip()
+
+    # 先校验名称重复，避免自动创建路径产生孤儿仓库
+    with get_db() as db:
+        if db.query(RepoPair).filter(RepoPair.name == name).first():
+            return RedirectResponse(
+                "/admin/repo-pairs?msg=" + _("配对名称已存在") + "&msg_type=danger", status_code=302)
+
+    settings = get_settings()
+    intranet_client = SeafileClient(settings.intranet_seafile_url, settings.intranet_seafile_token)
+    extranet_client = SeafileClient(settings.extranet_seafile_url, settings.extranet_seafile_token)
+
+    # 解析内外网仓库 id
+    if in_id and ex_id:
+        # 用户提供了现成仓库 id，校验存在性后直接复用
+        try:
+            if not await intranet_client.repo_exists(in_id):
+                return RedirectResponse(
+                    "/admin/repo-pairs?msg=" + _("内网仓库 ID「{id}」不存在", id=in_id) + "&msg_type=danger",
+                    status_code=302)
+            if not await extranet_client.repo_exists(ex_id):
+                return RedirectResponse(
+                    "/admin/repo-pairs?msg=" + _("外网仓库 ID「{id}」不存在", id=ex_id) + "&msg_type=danger",
+                    status_code=302)
+        except Exception as e:
+            logger.error(f"[RepoPair] 校验 Seafile 仓库失败: {e}")
+            return RedirectResponse(
+                "/admin/repo-pairs?msg=" + _("校验 Seafile 仓库失败：{error}", error=str(e)) + "&msg_type=danger",
+                status_code=302)
+        final_in_id = in_id
+        final_ex_id = ex_id
+    elif in_id or ex_id:
+        return RedirectResponse(
+            "/admin/repo-pairs?msg=" + _("请同时填写内网与外网仓库 ID，或都留空由系统自动创建") + "&msg_type=danger",
+            status_code=302)
+    else:
+        # 自动创建同名仓库
+        try:
+            final_in_id = await intranet_client.ensure_repo(name)
+            final_ex_id = await extranet_client.ensure_repo(name)
+        except Exception as e:
+            logger.error(f"[RepoPair] 创建 Seafile 仓库失败: {e}")
+            return RedirectResponse(
+                "/admin/repo-pairs?msg=" + _("创建 Seafile 仓库失败：{error}", error=str(e)) + "&msg_type=danger",
+                status_code=302)
+
+    with get_db() as db:
+        if db.query(RepoPair).filter(RepoPair.name == name).first():
+            return RedirectResponse(
+                "/admin/repo-pairs?msg=" + _("配对名称已存在") + "&msg_type=danger", status_code=302)
+        pair = RepoPair(
+            name=name,
+            intranet_repo_id=final_in_id,
+            extranet_repo_id=final_ex_id,
+            is_active=True,
+        )
+        db.add(pair)
+        db.commit()
+        db.refresh(pair)
+        pair_id = pair.id
+
+    log_action(current_user.username, "repo_pair_created", "repo_pair", pair_id,
+               {"name": name}, ip_address=request.client.host if request.client else "")
+
+    return RedirectResponse(
+        "/admin/repo-pairs?msg=" + _("配对「{name}」已创建，内外网仓库已就绪", name=name) + "&msg_type=success",
+        status_code=302)
+
+
+@router.post("/admin/repo-pairs/{pair_id}/toggle", response_class=HTMLResponse)
+async def admin_repo_pair_toggle(
+    pair_id: int,
+    request: Request,
+    current_user: CurrentUser = Depends(require_admin),
+):
+    with get_db() as db:
+        pair = db.query(RepoPair).filter(RepoPair.id == pair_id).first()
+        if not pair:
+            return RedirectResponse(
+                "/admin/repo-pairs?msg=" + _("配对不存在") + "&msg_type=danger", status_code=302)
+        pair.is_active = not pair.is_active
+        db.commit()
+        log_action(current_user.username, "repo_pair_toggled", "repo_pair", pair_id,
+                   {"active": pair.is_active}, ip_address=request.client.host if request.client else "")
+    return RedirectResponse("/admin/repo-pairs", status_code=302)
+
+
+@router.post("/admin/repo-pairs/{pair_id}/delete", response_class=HTMLResponse)
+async def admin_repo_pair_delete(
+    pair_id: int,
+    request: Request,
+    current_user: CurrentUser = Depends(require_admin),
+):
+    with get_db() as db:
+        pair = db.query(RepoPair).filter(RepoPair.id == pair_id).first()
+        if not pair:
+            return RedirectResponse(
+                "/admin/repo-pairs?msg=" + _("配对不存在") + "&msg_type=danger", status_code=302)
+        # 同步清理分组-配对关联
+        db.query(GroupRepoPair).filter(GroupRepoPair.repo_pair_id == pair_id).delete()
+        db.delete(pair)
+        db.commit()
+        log_action(current_user.username, "repo_pair_deleted", "repo_pair", pair_id,
+                   {"name": pair.name}, ip_address=request.client.host if request.client else "")
+    return RedirectResponse("/admin/repo-pairs", status_code=302)
+
+
+# ─────────────────────────────────────────────
+# 管理员：用户分组管理
+# ─────────────────────────────────────────────
+
+@router.get("/admin/groups", response_class=HTMLResponse)
+async def admin_groups(
+    request: Request,
+    current_user: CurrentUser = Depends(require_admin),
+):
+    msg = request.query_params.get("msg")
+    msg_type = request.query_params.get("msg_type", "success")
+    with get_db() as db:
+        groups = db.query(UserGroup).order_by(UserGroup.id).all()
+        pairs = db.query(RepoPair).order_by(RepoPair.id).all()
+        users = db.query(User).order_by(User.username).all()
+        group_data = []
+        for g in groups:
+            members = db.query(UserGroupMember).filter(UserGroupMember.group_id == g.id).all()
+            member_ids = {m.user_id for m in members}
+            grp_pairs = db.query(GroupRepoPair).filter(GroupRepoPair.group_id == g.id).all()
+            pair_ids = {p.repo_pair_id for p in grp_pairs}
+            group_data.append({"group": g, "member_ids": member_ids, "pair_ids": pair_ids})
+    return templates.TemplateResponse(
+        "admin_groups.html",
+        {
+            "request": request,
+            "user": current_user,
+            "groups": groups,
+            "group_data": group_data,
+            "pairs": pairs,
+            "users": users,
+            "msg": msg,
+            "msg_type": msg_type,
+        },
+    )
+
+
+@router.post("/admin/groups/create", response_class=HTMLResponse)
+async def admin_group_create(
+    request: Request,
+    name: str = Form(...),
+    current_user: CurrentUser = Depends(require_admin),
+):
+    name = (name or "").strip()
+    if not name:
+        return RedirectResponse(
+            "/admin/groups?msg=" + _("分组名称不能为空") + "&msg_type=danger", status_code=302)
+    with get_db() as db:
+        if db.query(UserGroup).filter(UserGroup.name == name).first():
+            return RedirectResponse(
+                "/admin/groups?msg=" + _("分组名称已存在") + "&msg_type=danger", status_code=302)
+        g = UserGroup(name=name)
+        db.add(g)
+        db.commit()
+        db.refresh(g)
+        group_id = g.id
+    log_action(current_user.username, "group_created", "user_group", group_id,
+               {"name": name}, ip_address=request.client.host if request.client else "")
+    return RedirectResponse(
+        "/admin/groups?msg=" + _("分组「{name}」已创建", name=name) + "&msg_type=success",
+        status_code=302)
+
+
+@router.post("/admin/groups/{group_id}/rename", response_class=HTMLResponse)
+async def admin_group_rename(
+    group_id: int,
+    request: Request,
+    name: str = Form(...),
+    current_user: CurrentUser = Depends(require_admin),
+):
+    name = (name or "").strip()
+    with get_db() as db:
+        g = db.query(UserGroup).filter(UserGroup.id == group_id).first()
+        if not g:
+            return RedirectResponse(
+                "/admin/groups?msg=" + _("分组不存在") + "&msg_type=danger", status_code=302)
+        g.name = name
+        db.commit()
+    return RedirectResponse("/admin/groups", status_code=302)
+
+
+@router.post("/admin/groups/{group_id}/delete", response_class=HTMLResponse)
+async def admin_group_delete(
+    group_id: int,
+    request: Request,
+    current_user: CurrentUser = Depends(require_admin),
+):
+    with get_db() as db:
+        g = db.query(UserGroup).filter(UserGroup.id == group_id).first()
+        if not g:
+            return RedirectResponse(
+                "/admin/groups?msg=" + _("分组不存在") + "&msg_type=danger", status_code=302)
+        db.query(UserGroupMember).filter(UserGroupMember.group_id == group_id).delete()
+        db.query(GroupRepoPair).filter(GroupRepoPair.group_id == group_id).delete()
+        db.delete(g)
+        db.commit()
+        log_action(current_user.username, "group_deleted", "user_group", group_id,
+                   {"name": g.name}, ip_address=request.client.host if request.client else "")
+    return RedirectResponse("/admin/groups", status_code=302)
+
+
+@router.post("/admin/groups/{group_id}/pairs", response_class=HTMLResponse)
+async def admin_group_set_pairs(
+    group_id: int,
+    request: Request,
+    repo_pair_ids: List[int] = Form(default=[]),
+    current_user: CurrentUser = Depends(require_admin),
+):
+    """设置分组挂载的配对仓库（全量替换）"""
+    with get_db() as db:
+        g = db.query(UserGroup).filter(UserGroup.id == group_id).first()
+        if not g:
+            return RedirectResponse(
+                "/admin/groups?msg=" + _("分组不存在") + "&msg_type=danger", status_code=302)
+        db.query(GroupRepoPair).filter(GroupRepoPair.group_id == group_id).delete()
+        for pid in repo_pair_ids:
+            db.add(GroupRepoPair(group_id=group_id, repo_pair_id=pid))
+        db.commit()
+    return RedirectResponse("/admin/groups", status_code=302)
+
+
+@router.post("/admin/groups/{group_id}/members", response_class=HTMLResponse)
+async def admin_group_set_members(
+    group_id: int,
+    request: Request,
+    user_ids: List[int] = Form(default=[]),
+    current_user: CurrentUser = Depends(require_admin),
+):
+    """设置分组成员（全量替换；用户可属多个分组）"""
+    with get_db() as db:
+        g = db.query(UserGroup).filter(UserGroup.id == group_id).first()
+        if not g:
+            return RedirectResponse(
+                "/admin/groups?msg=" + _("分组不存在") + "&msg_type=danger", status_code=302)
+        db.query(UserGroupMember).filter(UserGroupMember.group_id == group_id).delete()
+        for uid in user_ids:
+            db.add(UserGroupMember(group_id=group_id, user_id=uid))
+        db.commit()
+    return RedirectResponse("/admin/groups", status_code=302)

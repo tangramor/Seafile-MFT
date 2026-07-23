@@ -43,6 +43,8 @@ flowchart TD
 | 🖥️ **Admin Panel** | Admins can view all tasks, manage users, view audit logs, and manually trigger polling |
 | 📜 **Audit Log** | Comprehensive operation log tracking 14 action types (create/approve/reject tasks, manage users, file transfers, etc.) with filtering and pagination |
 | 🛡️ **File Deduplication** | Smart dedup prevents duplicate review tasks for the same file, even when Seafile creates new commits on access |
+| 🔗 **Paired Repositories (Repo Pairs)** | Admins manage multiple internal↔external Seafile library pairs from the UI. Each pair maps an internal library to a corresponding external library — approved files in the internal library are delivered to the matched external library. Supports auto-creating a same-named repo or reusing existing repo IDs. |
+| 👥 **User Groups & Visibility Isolation** | Non-admin users can be organized into groups; each group is bound to a set of repo pairs, and members can only view/access their own group's repos. |
 | 🐳 **Docker Deployment** | One-command build; all configuration via environment variables |
 
 ## Quick Start
@@ -133,6 +135,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 | **General** | | |
 | `SECRET_KEY` | Application secret key | `change-me` |
 | `DATABASE_URL` | Database path | `sqlite:///./seafile_mft.db` |
+
+> **About the repo ID config:** `INTRANET_REPO_ID` / `EXTRANET_REPO_ID` are only used on first deployment to seed the "default pair" into the database (via `seed_default_repo_pair`). All repo pairs (including the default) are then managed from the "Repo Pair Management" page; adding new pairs requires no env changes.
 
 ### Obtaining the Seafile API Token
 
@@ -291,6 +295,8 @@ LDAP user roles are mapped via AD groups: members of `LDAP_ADMIN_GROUP` become a
 | Download Files | `/downloads` | All users (own files only, or all for reviewers) |
 | Change Password | `/change-password` | All users |
 | User Management | `/admin/users` | Admin |
+| Repo Pair Management | `/admin/repo-pairs` | Admin |
+| User Group Management | `/admin/groups` | Admin |
 | Audit Log | `/admin/audit-log` | Reviewer / Admin |
 
 ![Main Page](./images/Seafile-MFT-en-02.png)
@@ -316,6 +322,16 @@ LDAP user roles are mapped via AD groups: members of `LDAP_ADMIN_GROUP` become a
 | `/admin/users/{id}/delete` | POST | Delete local user (admin only) |
 | `/admin/audit-log` | GET | Audit log (reviewer/admin) |
 | `/webhook/seafile` | POST | Seafile Webhook callback (Webhook mode only) |
+| `/admin/repo-pairs` | GET | Repo pair management page |
+| `/admin/repo-pairs/create` | POST | Create a pair (optionally with existing repo IDs) |
+| `/admin/repo-pairs/{id}/toggle` | POST | Enable/disable a pair |
+| `/admin/repo-pairs/{id}/delete` | POST | Delete a pair |
+| `/admin/groups` | GET | User group management page |
+| `/admin/groups/create` | POST | Create a group |
+| `/admin/groups/{id}/rename` | POST | Rename a group |
+| `/admin/groups/{id}/delete` | POST | Delete a group |
+| `/admin/groups/{id}/pairs` | POST | Bind repo pairs to a group |
+| `/admin/groups/{id}/members` | POST | Assign members to a group |
 | `/docs` | GET | Swagger API documentation |
 
 ## Directory Structure
@@ -325,7 +341,7 @@ seafile-MFT/
 ├── app/
 │   ├── main.py              # FastAPI entry point, lifecycle management, auto detection mode
 │   ├── config.py            # Global configuration (dual SMTP, LDAP, detection mode, etc.)
-│   ├── models.py            # Database models (User / UserSession / ReviewTask / PollerState / AuditLog)
+│   ├── models.py            # Database models (User / UserSession / ReviewTask / PollerState / AuditLog / RepoPair / UserGroup / GroupRepoPair)
 │   ├── auth.py              # Multi-auth (local/LDAP/Seafile), session management, permission dependencies, local user CRUD
 │   ├── audit.py             # Audit logging module (14 action types, integrated across all modules)
 │   ├── portal.py            # Web route handlers (login/upload/review board/downloads/user management/audit log)
@@ -354,6 +370,8 @@ seafile-MFT/
 │       ├── admin.html       # Admin panel (all tasks)
 │       ├── admin_users.html # User management (create/edit/enable-disable/role change/reset password/delete)
 │       ├── audit_log.html   # Audit log with filtering and pagination
+│       ├── admin_repo_pairs.html  # Repo pair management (create/toggle/delete, optional existing repo IDs)
+│       ├── admin_groups.html      # User group management (create/rename/delete/bind pairs/assign members)
 │       └── email/
 │           ├── review_notify.html  # Review notification email template
 │           └── result_notify.html  # Approval result email template
@@ -389,7 +407,8 @@ sequenceDiagram
 
 - ✅ **Audit log** — Implemented! Records all operations (task creation, approval, user management, file transfers, etc.) with filtering and pagination.
 - ✅ **Seafile auth** — Implemented! Users can now authenticate directly via Seafile API (`AUTH_METHOD=seafile`), in addition to local and LDAP modes.
-- **Multi-library mapping**: Modify poller/webhook modules to support multiple internal libraries mapped to different external libraries
+- ✅ **Multi-library mapping (repo pairs)** — Implemented! Admins manage multiple paired repos (internal↔external) from the UI, with auto-create-by-name or reuse of existing repo IDs; the poller and Webhook iterate over all enabled pairs.
+- ✅ **User groups & visibility isolation** — Implemented! Non-admin users are grouped; each group binds a set of repo pairs, and members only see their own group's repos.
 - **Approval rules**: Auto-approve or require manual review based on file type, size, etc.
 - **Multi-reviewer**: Implement countersign (all must approve) or or-sign (anyone can approve)
 - **File preview**: Add PDF/image online preview on the review page

@@ -1,11 +1,16 @@
 """
 数据库模型定义 - 使用同步 SQLAlchemy 避免 aiosqlite 线程问题
 """
-from sqlalchemy import Column, String, Integer, DateTime, Text, Enum, Boolean, create_engine
-from sqlalchemy.orm import DeclarativeBase, sessionmaker, Session
+import enum
+import logging
 from datetime import datetime
 from contextlib import contextmanager
-import enum
+
+from sqlalchemy import Column, String, Integer, DateTime, Text, Enum, Boolean, create_engine, text
+from sqlalchemy.orm import DeclarativeBase, sessionmaker, Session
+from sqlalchemy import inspect as sa_inspect
+
+logger = logging.getLogger(__name__)
 
 
 class ReviewStatus(str, enum.Enum):
@@ -72,6 +77,7 @@ class ReviewTask(Base):
     file_path = Column(String(1024), nullable=False)   # 内网文件路径
     file_size = Column(Integer, default=0)
     repo_id = Column(String(64), nullable=False)       # 内网 repo
+    repo_pair_id = Column(Integer, nullable=True, index=True)  # 所属配对仓库
     commit_id = Column(String(64), default="")         # 对应 commit
 
     # 上传者信息
@@ -110,6 +116,49 @@ class PollerState(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class RepoPair(Base):
+    """配对仓库：内网仓库与对应外网仓库的配对关系
+
+    一个配对代表「内网某个仓库的文件，审批通过后传送到对应的外网仓库」。
+    内网/外网仓库以同名方式存在于各自的 Seafile 实例上（不存在则自动创建）。
+    """
+    __tablename__ = "repo_pairs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(256), unique=True, nullable=False, index=True)
+    intranet_repo_id = Column(String(64), nullable=False)
+    extranet_repo_id = Column(String(64), nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class UserGroup(Base):
+    """用户分组：用于隔离不同团队的仓库可见范围"""
+    __tablename__ = "user_groups"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(256), unique=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class UserGroupMember(Base):
+    """用户-分组 多对多关联（一个用户可属多个分组）"""
+    __tablename__ = "user_group_members"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    group_id = Column(Integer, nullable=False, index=True)
+
+
+class GroupRepoPair(Base):
+    """分组-配对仓库 多对多关联（一个分组可挂载多个配对仓库）"""
+    __tablename__ = "group_repo_pairs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    group_id = Column(Integer, nullable=False, index=True)
+    repo_pair_id = Column(Integer, nullable=False, index=True)
+
+
 class AuditLog(Base):
     """
     审计日志表 - 记录所有关键操作（上传、审批、用户管理等）
@@ -146,6 +195,66 @@ def init_engine(database_url: str):
 def create_tables():
     """创建所有表（同步），忽略已存在的表"""
     Base.metadata.create_all(bind=_engine, checkfirst=True)
+
+
+def migrate_db():
+    """
+    对已有数据库的轻量迁移（新增列等）。
+    create_all 只建新表、不改已有表，因此已有 review_tasks 表需要手动 ALTER 补列。
+    """
+    from sqlalchemy import inspect
+    inspector = inspect(_engine)
+    existing = set(inspector.get_table_names())
+    # 确保新表存在（幂等）
+    Base.metadata.create_all(bind=_engine, checkfirst=True)
+    # 为已有的 review_tasks 补加 repo_pair_id 列
+    if "review_tasks" in existing:
+        cols = [c["name"] for c in inspector.get_columns("review_tasks")]
+        if "repo_pair_id" not in cols:
+            with _engine.begin() as conn:
+                conn.execute(text("ALTER TABLE review_tasks ADD COLUMN repo_pair_id INTEGER"))
+            logger.info("[Migrate] review_tasks 已补加 repo_pair_id 列")
+
+
+def seed_default_repo_pair(db: Session, settings):
+    """
+    首次启动时，将 config 中的单仓库迁移为「默认配对」，
+    并把尚未归属的审核任务回填到该配对，保证旧数据与旧行为不丢失。
+    """
+    if db.query(RepoPair).count() > 0:
+        return
+    if settings.intranet_repo_id and settings.extranet_repo_id:
+        pair = RepoPair(
+            name="默认配对",
+            intranet_repo_id=settings.intranet_repo_id,
+            extranet_repo_id=settings.extranet_repo_id,
+            is_active=True,
+        )
+        db.add(pair)
+        db.commit()
+        db.refresh(pair)
+        db.query(ReviewTask).filter(ReviewTask.repo_pair_id == None).update(
+            {ReviewTask.repo_pair_id: pair.id}
+        )
+        db.commit()
+        logger.info(f"[Migrate] 已将 config 单仓库迁移为默认配对 #{pair.id}")
+
+
+def get_accessible_pair_ids(db: Session, user_id: int, is_admin: bool):
+    """
+    返回用户可见的 repo_pair_id 列表。
+    - 管理员：返回 None，表示可见全部配对。
+    - 其他用户：可属多个分组，可见范围为所有所属分组挂载配对的并集；
+      若用户不属于任何分组，返回空列表（看不到任何配对内容）。
+    """
+    if is_admin:
+        return None
+    members = db.query(UserGroupMember).filter(UserGroupMember.user_id == user_id).all()
+    group_ids = [m.group_id for m in members]
+    if not group_ids:
+        return []
+    links = db.query(GroupRepoPair).filter(GroupRepoPair.group_id.in_(group_ids)).all()
+    return list({l.repo_pair_id for l in links})
 
 
 @contextmanager

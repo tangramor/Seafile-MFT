@@ -41,6 +41,8 @@ flowchart TD
 | 🖥️ **管理后台** | 管理员可查看所有任务、管理用户、查看审计日志、手动触发轮询 |
 | 📜 **审计日志** | 完整的操作记录追踪，覆盖 14 种操作类型（创建/审批任务、管理用户、文件传输等），支持筛选和分页 |
 | 🛡️ **文件去重** | 智能去重，防止 Seafile 浏览产生新 commit 时对同一文件重复创建审核任务 |
+| 🔗 **配对仓库管理** | 管理员可在界面上管理多组"内网 ↔ 外网"配对仓库。每组配对 = 一个内网文件库，其通过审批的文件自动送达对应的外网文件库。支持按名称自动创建同名仓库，或直接填入已有的仓库 ID 复用 |
+| 👥 **用户分组与可见性隔离** | 非管理员用户可归入分组，每个分组绑定一组配对仓库，成员只能查看/访问本分组的仓库内容 |
 | 🐳 **Docker 部署** | 一键构建，所有配置通过环境变量传递 |
 
 ## 快速开始
@@ -131,6 +133,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 | **基础** | | |
 | `SECRET_KEY` | 应用密钥 | `change-me` |
 | `DATABASE_URL` | 数据库路径 | `sqlite:///./seafile_mft.db` |
+
+> **关于仓库 ID 配置**：`INTRANET_REPO_ID` / `EXTRANET_REPO_ID` 仅在首次部署时作为"默认配对"写入数据库（由 `seed_default_repo_pair` 自动迁移）。此后所有配对仓库（含默认配对）均在「配对仓库管理」界面维护，新增配对无需改动环境变量。
 
 ### 获取 Seafile API Token
 
@@ -289,6 +293,8 @@ LDAP 用户的角色通过 AD 组映射：属于 `LDAP_ADMIN_GROUP` 则为管理
 | 下载文件 | `/downloads` | 所有用户（仅自己的文件或审核者看全部） |
 | 修改密码 | `/change-password` | 所有用户 |
 | 用户管理 | `/admin/users` | 管理员 |
+| 配对仓库管理 | `/admin/repo-pairs` | 管理员 |
+| 用户分组管理 | `/admin/groups` | 管理员 |
 | 审计日志 | `/admin/audit-log` | 审核者/管理员 |
 
 ![Main Page](./images/Seafile-MFT-zh-02.png)
@@ -314,6 +320,16 @@ LDAP 用户的角色通过 AD 组映射：属于 `LDAP_ADMIN_GROUP` 则为管理
 | `/admin/users/{id}/delete` | POST | 删除本地用户（管理员） |
 | `/admin/audit-log` | GET | 审计日志（审核者/管理员） |
 | `/webhook/seafile` | POST | Seafile Webhook 回调（仅 Webhook 模式） |
+| `/admin/repo-pairs` | GET | 配对仓库管理页面 |
+| `/admin/repo-pairs/create` | POST | 新建配对（可选填现成仓库 ID） |
+| `/admin/repo-pairs/{id}/toggle` | POST | 启用/停用配对 |
+| `/admin/repo-pairs/{id}/delete` | POST | 删除配对 |
+| `/admin/groups` | GET | 用户分组管理页面 |
+| `/admin/groups/create` | POST | 新建分组 |
+| `/admin/groups/{id}/rename` | POST | 重命名分组 |
+| `/admin/groups/{id}/delete` | POST | 删除分组 |
+| `/admin/groups/{id}/pairs` | POST | 设置分组绑定的配对仓库 |
+| `/admin/groups/{id}/members` | POST | 设置分组成员 |
 | `/docs` | GET | Swagger API 文档 |
 
 ## 目录结构
@@ -323,7 +339,7 @@ seafile-MFT/
 ├── app/
 │   ├── main.py              # FastAPI 入口，生命周期管理，自动检测模式
 │   ├── config.py            # 全局配置（双 SMTP、LDAP、检测模式等）
-│   ├── models.py            # 数据库模型（User / UserSession / ReviewTask / PollerState / AuditLog）
+│   ├── models.py            # 数据库模型（User / UserSession / ReviewTask / PollerState / AuditLog / RepoPair / UserGroup / GroupRepoPair）
 │   ├── auth.py              # 多认证（本地/LDAP/Seafile）、Session 管理、权限依赖、本地用户 CRUD
 │   ├── audit.py             # 审计日志模块（14 种操作类型，集成于各模块）
 │   ├── portal.py            # Web 功能路由（登录/上传/审核看板/下载/用户管理/审计日志）
@@ -352,6 +368,8 @@ seafile-MFT/
 │       ├── admin.html       # 管理后台（所有任务）
 │       ├── admin_users.html # 用户管理（创建/编辑/启用禁用/角色变更/重置密码/删除）
 │       ├── audit_log.html   # 审计日志（筛选、分页）
+│       ├── admin_repo_pairs.html  # 配对仓库管理（创建/启停/删除，可选填现成仓库 ID）
+│       ├── admin_groups.html      # 用户分组管理（创建/改名/删除/分配配对/分配成员）
 │       └── email/
 │           ├── review_notify.html  # 审核通知邮件模板
 │           └── result_notify.html  # 审批结果邮件模板
@@ -387,7 +405,8 @@ sequenceDiagram
 
 - ✅ **审计日志** — 已实现！记录所有操作（任务创建、审批、用户管理、文件传输等），支持筛选和分页。
 - ✅ **Seafile 认证** — 已实现！用户现在可以通过 Seafile API 直接认证（`AUTH_METHOD=seafile`），除本地和 LDAP 模式外的新选择。
-- **多库映射**：修改 poller/webhook 模块支持多个内网库对应不同外网库
+- ✅ **多库映射（配对仓库）** — 已实现！管理员可在界面上管理多组配对仓库（内网库 ↔ 外网库），支持按名称自动创建或填入已有仓库 ID 复用；轮询器与 Webhook 分别遍历所有启用中的配对仓库
+- ✅ **用户分组与可见性隔离** — 已实现！非管理员用户可归入分组，每个分组绑定一组配对仓库，成员只能查看本分组的仓库内容
 - **审批规则**：基于文件类型、大小自动通过或需要人工审批
 - **多审批人**：实现会签（所有人通过）或或签（一人通过即可）
 - **文件预览**：在审批页添加 PDF / 图片在线预览

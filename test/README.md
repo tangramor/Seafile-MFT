@@ -136,6 +136,23 @@ docker compose up -d && docker compose logs -f seafile-mft
 | Internal Seafile | http://localhost:8001 | admin@intranet.local / admin123456 |
 | External Seafile | http://localhost:8002 | admin@extranet.local / admin123456 |
 
+## New Features: Repo Pair Management & User Groups
+
+This test environment ships with a built-in **default pair**: the internal/external repo IDs written by `setup.sh` are auto-seeded into the database via `seed_default_repo_pair`, i.e. internal "Internal Source" ↔ external "Publish Target". On top of this you can extend two capabilities:
+
+### Paired Repositories (Repo Pairs)
+- In the "Repo Pair Management" page you can add a pair: after entering a name, the system ensures a same-named library exists on both internal and external Seafile (auto-created if missing).
+- If you already have pre-built repos on both Seafiles, you can enter both repo IDs directly when creating the pair — the system reuses them instead of auto-creating. Both IDs must be supplied together; supplying only one is rejected.
+- Each pair can be enabled/disabled individually; a disabled pair is excluded from polling and Webhook.
+- A file detected or uploaded in **which internal pair** is delivered to the **corresponding external pair** after approval, giving per-business isolation.
+
+### User Groups
+- Non-admin users can be organized into groups; each group binds a set of repo pairs.
+- Members only see the repo pairs bound to their own group on the upload page; the review board and downloads also show only tasks related to their visible pairs. Admins and reviewers see everything.
+- A non-admin user assigned to no group sees the upload page message "You are not assigned to any repo group and cannot upload files."
+
+> Cleanup note: test leftovers (e.g. group `grp-A`, user `alice`/`alice123`, pair `test-pair-1` and its same-named internal/external repos) can be deleted from the UI. Deleting a pair does **not** delete the actual Seafile repository.
+
 ## Functional Testing Guide
 
 ### Preparation
@@ -644,6 +661,55 @@ docker compose logs seafile-mft 2>&1 | grep -i "email\|reviewer" | tail -10
 - ✅ `seafile` mode: password change page shows "managed by Seafile" notice
 - ✅ `ldap` mode: non-admin users authenticate via LDAP, admin uses local DB
 - ✅ Login page hint text reflects the current auth mode
+
+---
+
+### Test 17: Repo Pair Management (Auto-Create + Reuse Existing IDs)
+
+**Objective**: Verify admins can create repo pairs via both "auto-create by name" and "reuse existing repo IDs", and verify toggle/delete and validation.
+
+**Steps**:
+
+1. Log into MFT as admin, go to "Repo Pair Management"
+2. Method A (auto-create): enter a name like `finance-contract`, click "Create Pair"
+3. Log into internal/external Seafile and confirm a library named `finance-contract` now exists on each
+4. Method B (reuse existing IDs): in the create form, fill "Internal Repo ID (optional)" and "External Repo ID (optional)" with two **existing** repo IDs, then click create
+5. Confirm the new pair appears in the list and shows the supplied repo IDs
+6. Validation: submit with only one ID → should prompt "Please provide both internal and external repo IDs, or leave both empty to auto-create"
+7. Validation: submit with a non-existent ID → should prompt "Internal Repo ID '…' does not exist"
+8. Click "Disable" on a pair and confirm it is no longer polled (the pair drops out of the monitoring log)
+9. Delete the test pair
+
+**Verification points**:
+- ✅ Auto-create generates a same-named repo on both Seafiles
+- ✅ Reuse-existing-IDs uses the given IDs without creating new repos
+- ✅ Supplying only one ID / a non-existent ID is blocked with a clear message
+- ✅ Disabled pair exits polling; deleting a pair does not delete the actual Seafile repo
+
+---
+
+### Test 18: User Group Visibility Isolation
+
+**Objective**: After assigning a non-admin user to a group bound to specific repo pairs, the member can only see their own group's repos.
+
+**Steps**:
+
+1. Log in as admin, go to "Repo Pair Management", confirm at least two pairs exist (e.g. "Default Pair" and `finance-contract`)
+2. Go to "User Group Management", create a group `grp-A`
+3. Bind pairs to `grp-A`: select only `finance-contract`, save
+4. In "User Management", create a regular user `alice` (role: submitter)
+5. Back in group `grp-A`, add `alice` as a member, save
+6. Log in as `alice`, go to "Upload File"
+7. Confirm the pair dropdown shows **only** `finance-contract`, not "Default Pair"
+8. Upload a file to `finance-contract` as `alice`
+9. Log in as admin, go to the "Review Board", confirm the task is visible (admin sees all)
+10. Log in as another **ungrouped** regular user `bob`, confirm the upload page shows "You are not assigned to any repo group and cannot upload files"
+
+**Verification points**:
+- ✅ Group members see only their group's bound pairs on the upload page
+- ✅ Files are delivered to the corresponding external repo per the selected pair
+- ✅ Admins/reviewers can see all pair-related tasks
+- ✅ Ungrouped users are blocked from uploading with a clear message
 
 ## Common Commands
 

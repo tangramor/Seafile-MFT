@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}{{ _("用户分组 · MFT 审核系统") }}{% endblock %}
+
+{% block content %}
+<h2 style="font-size:20px;font-weight:700;margin-bottom:24px;">🗃️ {{ _("用户分组管理") }}</h2>
+
+{% if msg %}
+<div class="alert alert-{{ msg_type or 'info' }}">{{ _(msg) if msg else '' }}</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-title">➕ {{ _("新建分组") }}</div>
+  <form method="post" action="/admin/groups/create" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+    <div class="form-group" style="flex:1;min-width:240px;margin-bottom:0;">
+      <label class="form-label">{{ _("分组名称") }}</label>
+      <input type="text" name="name" class="form-control" placeholder="{{ _('如：财务部') }}" required>
+    </div>
+    <button type="submit" class="btn btn-primary">🗃️ {{ _("创建分组") }}</button>
+  </form>
+</div>
+
+{% for gd in group_data %}
+{% set g = gd.group %}
+<div class="card">
+  <div class="card-title" style="justify-content:space-between;">
+    <span>🗃️ <strong>{{ g.name }}</strong></span>
+    <span>
+      <form method="post" action="/admin/groups/{{ g.id }}/delete" style="display:inline;"
+            onsubmit="return confirm('{{ _("确认删除该分组？成员与配对关联将一并清除。") }}');">
+        <button type="submit" class="btn btn-sm btn-danger">{{ _("删除分组") }}</button>
+      </form>
+    </span>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
+    <!-- 左：挂载配对仓库 -->
+    <div>
+      <div class="form-label" style="margin-bottom:10px;">{{ _("该分组可访问的配对仓库") }}</div>
+      <form method="post" action="/admin/groups/{{ g.id }}/pairs">
+        <div style="max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:10px;">
+          {% for p in pairs %}
+          <label style="display:flex;align-items:center;gap:8px;padding:5px 4px;font-size:14px;">
+            <input type="checkbox" name="repo_pair_ids" value="{{ p.id }}"
+                   {% if p.id in gd.pair_ids %}checked{% endif %}>
+            {{ p.name }}
+            {% if not p.is_active %}<span class="badge badge-muted">{{ _("停用") }}</span>{% endif %}
+          </label>
+          {% else %}
+          <span style="color:#999;font-size:13px;">{{ _("暂无配对仓库，请先到「配对仓库」创建") }}</span>
+          {% endfor %}
+        </div>
+        <button type="submit" class="btn btn-sm btn-success" style="margin-top:10px;">{{ _("保存配对") }}</button>
+      </form>
+    </div>
+
+    <!-- 右：成员 -->
+    <div>
+      <div class="form-label" style="margin-bottom:10px;">{{ _("分组成员（可多选，用户可属多个分组）") }}</div>
+      <form method="post" action="/admin/groups/{{ g.id }}/members">
+        <div style="max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:10px;">
+          {% for u in users %}
+          <label style="display:flex;align-items:center;gap:8px;padding:5px 4px;font-size:14px;">
+            <input type="checkbox" name="user_ids" value="{{ u.id }}"
+                   {% if u.id in gd.member_ids %}checked{% endif %}>
+            {{ u.username }}
+            {% if u.display_name and u.display_name != u.username %}<span style="color:#999;">（{{ u.display_name }}）</span>{% endif %}
+            <span class="badge badge-muted" style="margin-left:auto;">{{ u.role.value }}</span>
+          </label>
+          {% else %}
+          <span style="color:#999;font-size:13px;">{{ _("暂无用户") }}</span>
+          {% endfor %}
+        </div>
+        <button type="submit" class="btn btn-sm btn-success" style="margin-top:10px;">{{ _("保存成员") }}</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% else %}
+<div class="card">
+  <p style="color:#999;text-align:center;">{{ _("暂无分组，请先在上方创建分组。") }}</p>
+</div>
+{% endfor %}
+{% endblock %}

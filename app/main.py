@@ -16,7 +16,7 @@ from fastapi.responses import RedirectResponse, JSONResponse
 from .config import get_settings
 from .i18n import _
 from .i18n.middleware import I18nMiddleware
-from .models import create_tables, init_engine
+from .models import create_tables, init_engine, migrate_db, seed_default_repo_pair, get_db
 from .review import router as review_router
 from .portal import router as portal_router
 
@@ -37,9 +37,13 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     init_engine(settings.database_url)
     create_tables()  # 同步创建表（含 User / UserSession 等）
+    migrate_db()     # 轻量迁移：为已有表补列（如 review_tasks.repo_pair_id）
+
+    # 将 config 中的单仓库迁移为「默认配对」（首次启动时）
+    with get_db() as db:
+        seed_default_repo_pair(db, settings)
 
     # 初始化默认管理员账号
-    from .models import get_db
     from .auth import ensure_default_admin
     with get_db() as db:
         ensure_default_admin(db)
