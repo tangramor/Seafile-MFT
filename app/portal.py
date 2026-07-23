@@ -909,6 +909,7 @@ async def change_password_submit(
 async def audit_log_page(
     request: Request,
     action: str = "",
+    target_type: str = "",
     page: int = 1,
     current_user: CurrentUser = Depends(require_reviewer),
 ):
@@ -920,6 +921,8 @@ async def audit_log_page(
         query = db.query(AuditLogModel)
         if action:
             query = query.filter(AuditLogModel.action == action)
+        if target_type:
+            query = query.filter(AuditLogModel.target_type == target_type)
         total = query.count()
         entries = query.order_by(AuditLogModel.id.desc()).offset(
             (page - 1) * page_size
@@ -940,6 +943,7 @@ async def audit_log_page(
             "user": current_user,
             "entries": entries,
             "current_action": action,
+            "current_type": target_type,
             "page": page,
             "page_size": page_size,
             "total": total,
@@ -1214,6 +1218,8 @@ async def admin_group_rename(
                 "/admin/groups?msg=" + _("分组不存在") + "&msg_type=danger", status_code=302)
         g.name = name
         db.commit()
+    log_action(current_user.username, "group_renamed", "user_group", group_id,
+               {"name": name}, ip_address=request.client.host if request.client else "")
     return RedirectResponse("/admin/groups", status_code=302)
 
 
@@ -1254,6 +1260,8 @@ async def admin_group_set_pairs(
         for pid in repo_pair_ids:
             db.add(GroupRepoPair(group_id=group_id, repo_pair_id=pid))
         db.commit()
+    log_action(current_user.username, "group_pairs_updated", "user_group", group_id,
+               {"repo_pair_ids": repo_pair_ids}, ip_address=request.client.host if request.client else "")
     return RedirectResponse("/admin/groups", status_code=302)
 
 
@@ -1274,4 +1282,6 @@ async def admin_group_set_members(
         for uid in user_ids:
             db.add(UserGroupMember(group_id=group_id, user_id=uid))
         db.commit()
+    log_action(current_user.username, "group_members_updated", "user_group", group_id,
+               {"user_ids": user_ids}, ip_address=request.client.host if request.client else "")
     return RedirectResponse("/admin/groups", status_code=302)

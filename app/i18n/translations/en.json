@@ -426,6 +426,15 @@
   "暂无用户": "No users",
   "暂无分组，请先在上方创建分组。": "No groups yet. Please create a group above first.",
 
+  "重命名分组": "Rename Group",
+  "更新分组配对": "Update Group Repo Pairs",
+  "更新分组成员": "Update Group Members",
+  "新名称": "New name",
+  "配对数量": "Repo pairs",
+  "成员数量": "Members",
+  "配对管理": "Repo Pair Management",
+  "分组管理": "Group Management",
+
   "目标仓库配对": "Target Repo Pair",
   "文件将上传到该配对的内网仓库，审批通过后自动同步至对应的外网仓库。": "The file will be uploaded to this pair's internal repo, and synced to the corresponding external repo after approval.",
   "您当前未被分配到任何仓库分组，无法上传文件。请联系管理员。": "You are not assigned to any repo group and cannot upload files. Please contact the administrator.",

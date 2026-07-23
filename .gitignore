@@ -4,3 +4,4 @@
 *.log
 *.tar
 __pycache__/
+migrations/

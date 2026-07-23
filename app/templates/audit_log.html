@@ -13,6 +13,8 @@
   <a href="/admin/audit-log?action=task_transferred" class="{% if current_action=='task_transferred' %}active{% endif %}">{{ _("同步完成") }}</a>
   <a href="/admin/audit-log?action=user_login" class="{% if current_action=='user_login' %}active{% endif %}">{{ _("登录") }}</a>
   <a href="/admin/audit-log?action=user_created" class="{% if current_action=='user_created' %}active{% endif %}">{{ _("用户管理") }}</a>
+  <a href="/admin/audit-log?type=repo_pair" class="{% if current_type=='repo_pair' %}active{% endif %}">{{ _("配对管理") }}</a>
+  <a href="/admin/audit-log?type=user_group" class="{% if current_type=='user_group' %}active{% endif %}">{{ _("分组管理") }}</a>
 </div>
 
 {% if entries %}
@@ -54,6 +56,9 @@
             'repo_pair_deleted': ('🗑️ ' + _("删除配对"), 'danger'),
             'group_created': ('🗃️ ' + _("创建分组"), 'success'),
             'group_deleted': ('🗑️ ' + _("删除分组"), 'danger'),
+            'group_renamed': ('✏️ ' + _("重命名分组"), 'warning'),
+            'group_pairs_updated': ('🔗 ' + _("更新分组配对"), 'info'),
+            'group_members_updated': ('👥 ' + _("更新分组成员"), 'info'),
           } %}
           {% set al = action_labels.get(e.action, (e.action, 'info')) %}
           <span class="badge badge-{{ al[1] }}">{{ al[0] }}</span>
@@ -94,6 +99,14 @@
             {{ d.username or '-' }} → <span style="color:var(--primary);">{{ d.new_role or '-' }}</span>
           {% elif e.action in ('user_enabled', 'user_disabled') %}
             {{ d.username or '-' }}
+          {% elif e.action == 'group_renamed' %}
+            {{ _("新名称") }}：{{ d.name or '-' }}
+          {% elif e.action == 'group_pairs_updated' %}
+            {% set ids = d.repo_pair_ids or [] %}
+            {{ _("配对数量") }}：{{ ids|length }}{% if ids %}（#{{ ids|join(', #') }}）{% endif %}
+          {% elif e.action == 'group_members_updated' %}
+            {% set ids = d.user_ids or [] %}
+            {{ _("成员数量") }}：{{ ids|length }}{% if ids %}（#{{ ids|join(', #') }}）{% endif %}
           {% else %}
             {{ e.details }}
           {% endif %}
@@ -109,7 +122,9 @@
 {% if total_pages > 1 %}
 <div style="text-align:center;margin-top:20px;font-size:13px;">
   {% for p in range(1, total_pages + 1) %}
-    {% set action_param = '&action=' + current_action if current_action else '' %}
+    {% set action_param = '' %}
+  {% if current_action %}{% set action_param = '&action=' + current_action %}{% endif %}
+  {% if current_type %}{% set action_param = action_param + '&type=' + current_type %}{% endif %}
     {% if p == page %}
     <span style="display:inline-block;padding:4px 10px;margin:0 2px;background:var(--primary);color:#fff;border-radius:4px;">{{ p }}</span>
     {% else %}
