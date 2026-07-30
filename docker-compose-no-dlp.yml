@@ -1,0 +1,79 @@
+services:
+  seafile-mft:
+    build: .
+    container_name: seafile-mft
+    image: seafile-mft:latest
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    volumes:
+      - /etc/localtime:/etc/localtime
+      - ./seafile_mft.db:/app/seafile_mft.db
+      # 不再挂载 .env 文件，改用 environment 传递关键配置
+    environment:
+      - TZ=Asia/Shanghai
+      # 从 .env 文件读取并传递（需要在启动前设置这些环境变量）
+      - INTRANET_SEAFILE_URL=${INTRANET_SEAFILE_URL:-http://192.168.101.111}
+      - INTRANET_SEAFILE_TOKEN=${INTRANET_SEAFILE_TOKEN:-}
+      - INTRANET_REPO_ID=${INTRANET_REPO_ID:-eb8d70e1-736c-4548-b1bc-01d129071a11}
+      - EXTRANET_SEAFILE_URL=${EXTRANET_SEAFILE_URL:-https://seafile.example.com}
+      - EXTRANET_SEAFILE_TOKEN=${EXTRANET_SEAFILE_TOKEN:-}
+      - EXTRANET_REPO_ID=${EXTRANET_REPO_ID:-}
+      # ── 内网 SMTP（审批链接指向内网地址）
+      - INTRANET_SMTP_HOST=${INTRANET_SMTP_HOST:-}
+      - INTRANET_SMTP_PORT=${INTRANET_SMTP_PORT:-465}
+      - INTRANET_SMTP_USER=${INTRANET_SMTP_USER:-}
+      - INTRANET_SMTP_PASSWORD=${INTRANET_SMTP_PASSWORD:-}
+      - INTRANET_SMTP_USE_SSL=${INTRANET_SMTP_USE_SSL:-true}
+      # ── 外网 SMTP（审批链接指向外网地址；留空则只发内网邮件）
+      - EXTRANET_SMTP_HOST=${EXTRANET_SMTP_HOST:-}
+      - EXTRANET_SMTP_PORT=${EXTRANET_SMTP_PORT:-465}
+      - EXTRANET_SMTP_USER=${EXTRANET_SMTP_USER:-}
+      - EXTRANET_SMTP_PASSWORD=${EXTRANET_SMTP_PASSWORD:-}
+      - EXTRANET_SMTP_USE_SSL=${EXTRANET_SMTP_USE_SSL:-true}
+      # ── 旧版单 SMTP 兼容（若未设置 INTRANET_SMTP_* 则回退）
+      - SMTP_HOST=${SMTP_HOST:-smtp.example.com}
+      - SMTP_PORT=${SMTP_PORT:-465}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_USE_SSL=${SMTP_USE_SSL:-true}
+      - REVIEWER_EMAILS=${REVIEWER_EMAILS:-}
+      # ── 应用访问地址（用于邮件中的审批链接）
+      - INTRANET_APP_URL=${INTRANET_APP_URL:-http://192.168.101.111:8081}
+      - EXTRANET_APP_URL=${EXTRANET_APP_URL:-}
+      - APP_BASE_URL=${APP_BASE_URL:-http://localhost:8081}
+      - SECRET_KEY=${SECRET_KEY:-change-me}
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///./seafile_mft.db}
+      - REVIEW_TOKEN_EXPIRE_HOURS=${REVIEW_TOKEN_EXPIRE_HOURS:-72}
+      # ── LDAP 认证
+      - LDAP_HOST=${LDAP_HOST:-}
+      - LDAP_PORT=${LDAP_PORT:-389}
+      - LDAP_USE_SSL=${LDAP_USE_SSL:-false}
+      - LDAP_BASE_DN=${LDAP_BASE_DN:-dc=example,dc=com}
+      - LDAP_USER_DN_TEMPLATE=${LDAP_USER_DN_TEMPLATE:-}
+      - LDAP_REVIEWER_GROUP=${LDAP_REVIEWER_GROUP:-mft-reviewers}
+      - LDAP_ADMIN_GROUP=${LDAP_ADMIN_GROUP:-mft-admins}
+      - DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD:-admin123}
+      # ── 认证方式（local / ldap / seafile）
+      - AUTH_METHOD=${AUTH_METHOD:-ldap}
+      # ── Seafile 认证目标（intranet / extranet，仅 AUTH_METHOD=seafile 时生效）
+      - AUTH_SEAFILE=${AUTH_SEAFILE:-intranet}
+      - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-60}
+      - POLL_ON_STARTUP=${POLL_ON_STARTUP:-true}
+      # ── 文件检测模式（auto/webhook/poll）
+      # auto    = 启动时自动检测 Seafile 版本（>=7.0 用 Webhook，否则轮询）
+      # webhook = 强制 Webhook（需 Seafile >= 7.0 并在后台配置 Webhook URL）
+      # poll    = 强制轮询（兼容所有版本，默认推荐）
+      - DETECTION_MODE=${DETECTION_MODE:-auto}
+      # Webhook 签名密钥（Seafile 后台配置 Webhook 时填写相同值，留空则跳过验证）
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
+      - DLP_ENABLED=false
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  default:
+    name: seafile-mft-net
