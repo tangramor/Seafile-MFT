@@ -43,6 +43,7 @@ flowchart TD
 | 🛡️ **文件去重** | 智能去重，防止 Seafile 浏览产生新 commit 时对同一文件重复创建审核任务 |
 | 🔗 **配对仓库管理** | 管理员可在界面上管理多组"内网 ↔ 外网"配对仓库。每组配对 = 一个内网文件库，其通过审批的文件自动送达对应的外网文件库。支持按名称自动创建同名仓库，或直接填入已有的仓库 ID 复用 |
 | 👥 **用户分组与可见性隔离** | 非管理员用户可归入分组，每个分组绑定一组配对仓库，成员只能查看/访问本分组的仓库内容 |
+| 🛡️ **DLP 出口扫描** | 文件同步到外网 Seafile 前，可先送交 **scan-worker 微服务**（YARA + malcontent）做内容检测。命中高危（源码泄露、密钥、恶意行为）时挂起任务等待审核者确认，而非静默传出 |
 | 🐳 **Docker 部署** | 一键构建，所有配置通过环境变量传递 |
 
 ## 快速开始
@@ -133,6 +134,14 @@ uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 | **基础** | | |
 | `SECRET_KEY` | 应用密钥 | `change-me` |
 | `DATABASE_URL` | 数据库路径 | `sqlite:///./seafile_mft.db` |
+| **DLP（出口扫描）** | 需配合 scan-worker 微服务栈（见 `scan-worker/`） | |
+| `DLP_ENABLED` | 是否在传输前开启 DLP 出口扫描 | `false` |
+| `DLP_GATEWAY_URL` | scan-worker 网关地址 | `http://scan-gateway:8080` |
+| `DLP_CALLBACK_URL` | 接收扫描结果的 Webhook；留空则取 `{APP_BASE_URL}/internal/dlp-webhook` | — |
+| `DLP_ALERT_SEVERITIES` | 达到这些严重度（逗号分隔）才挂起等待审核 | `critical,high` |
+| `DLP_MAX_FILE_SIZE` | 超过此大小（字节）跳过扫描直接放行 | `104857600`（100MB） |
+| `DLP_SUBMIT_TIMEOUT` | 提交网关的超时（秒） | `30` |
+| `DLP_FAIL_CLOSED` | `true`=扫描提交失败则拦截不放行；`false`=放行（默认，避免 DLP 故障阻断业务） | `false` |
 
 > **关于仓库 ID 配置**：`INTRANET_REPO_ID` / `EXTRANET_REPO_ID` 仅在首次部署时作为"默认配对"写入数据库（由 `seed_default_repo_pair` 自动迁移）。此后所有配对仓库（含默认配对）均在「配对仓库管理」界面维护，新增配对无需改动环境变量。
 
@@ -235,6 +244,58 @@ http://<MFT服务器IP>:8081/webhook/seafile
 
 > **为什么选择目录遍历而非 commit diff？** Seafile 6.x 的 `GET /api2/repos/{id}/commits/{commit_id}/` 和 `GET /api2/repos/{id}/history/{commit_id}/` 均返回 404，无法获取单个 commit 的文件变更。目录遍历 + mtime 对比是兼容所有版本的最可靠方案。
 
+## 数据防泄露（DLP）— 出口扫描
+
+启用后（`DLP_ENABLED=true`），每个通过审批的文件在同步到外网 Seafile **之前**都会被送交 **scan-worker 微服务**进行内容扫描，作为一道出口 DLP 闸门。可检出仅靠人工审批容易遗漏的源码泄露、内嵌密钥、恶意载荷等问题。
+
+### 工作原理
+
+```mermaid
+sequenceDiagram
+    actor 审批人
+    participant MFT
+    participant 网关 as scan-worker 网关
+    participant 队列 as Kafka + MinIO
+    participant 扫描器 as 扫描 Worker
+    participant 外网 as 外网 Seafile
+
+    审批人->>MFT: 审批通过
+    MFT->>网关: POST /upload（文件字节，uploader=mft-task-{id}）
+    网关->>队列: 存入 MinIO + 入队
+    队列->>扫描器: 消费并递归解包 + 扫描
+    扫描器-->>MFT: POST {verdict, severity, hits} 回调
+    alt verdict=clean / 严重度低于阈值
+        MFT->>外网: 自动传输文件
+    else verdict=alert（严重度命中 DLP_ALERT_SEVERITIES）
+        MFT->>MFT: 挂起任务（dlp_state=alert），通知审批人
+        审批人->>MFT: 确认误报→放行 / 确认泄露→拦截
+    end
+```
+
+1. 审核人**通过**任务后，MFT 将文件字节提交给 scan-worker 网关（`DLP_GATEWAY_URL`）。
+2. 网关将文件存入 MinIO 并发布到 Kafka 队列。
+3. 扫描 Worker 消费消息，**递归解包**归档（zip/tar/gz/bz2/xz/7z）并逐层扫描：
+   - **YARA** 规则检测源码泄露、嵌入压缩包、密钥令牌（AWS/GitHub/Google/Slack/JWT/PEM）、二进制夹带源码、加壳/混淆。
+   - **malcontent**（`mal`）利用内置规则集检测恶意行为——反向 Shell、凭据窃取器、远控（RAT）、加壳工具等。
+4. 扫描器将结果 `{verdict, severity, hits}` 回传 MFT 的回调（`DLP_CALLBACK_URL`，默认 `{APP_BASE_URL}/internal/dlp-webhook`）。
+5. MFT 决策：
+   - `verdict=clean` **或** 严重度低于 `DLP_ALERT_SEVERITIES` → **自动放行**，执行传输。
+   - `verdict=alert` **且** 严重度在 `DLP_ALERT_SEVERITIES` 内 → **挂起**任务（`dlp_state=alert`），记录命中详情，并通知审核者确认。
+
+### 为什么是挂起而非硬拦截？
+
+误报不可避免（例如构建产物里夹带的合法源码）。默认策略**挂起等待人工确认**，既不会因误报阻断业务，也能确保确认的泄露文件不会流出。审核者可在审核看板将误报放行，或将确认的泄露拦截。
+
+### 审核看板集成
+
+DLP 挂起的任务同时出现在 **⚠️ DLP 待确认** 标签（`/review-board?dlp=alert`）**和** **待审批** 列表中，并带有 DLP 告警徽标与「确认误报/放行」「确认泄露/拦截」按钮。
+
+### scan-worker 部署
+
+scan-worker 是 `scan-worker/` 下独立的 `docker-compose` 服务栈。其 `scanner`/`sandbox` 镜像基于 `cgr.dev/chainguard/malcontent:latest`（Wolfi）构建，内置 `mal` 二进制与 YARA。架构、YARA 规则与运维详见 [`scan-worker/README.md`](./scan-worker/README.md)。
+
+> **故障放行 / 拦截（Fail-open / Fail-closed）：** 若扫描提交失败，`DLP_FAIL_CLOSED=false`（默认）会让文件放行，避免 DLP 故障阻断业务；设为 `true` 则在失败时拦截。超过 `DLP_MAX_FILE_SIZE` 的文件跳过扫描直接放行。
+
 ## 认证模式
 
 系统支持三种认证方式，通过 `AUTH_METHOD` 环境变量控制：
@@ -320,6 +381,7 @@ LDAP 用户的角色通过 AD 组映射：属于 `LDAP_ADMIN_GROUP` 则为管理
 | `/admin/users/{id}/delete` | POST | 删除本地用户（管理员） |
 | `/admin/audit-log` | GET | 审计日志（审核者/管理员） |
 | `/webhook/seafile` | POST | Seafile Webhook 回调（仅 Webhook 模式） |
+| `/internal/dlp-webhook` | POST | scan-worker 扫描结果回调（DLP 出口扫描） |
 | `/admin/repo-pairs` | GET | 配对仓库管理页面 |
 | `/admin/repo-pairs/create` | POST | 新建配对（可选填现成仓库 ID） |
 | `/admin/repo-pairs/{id}/toggle` | POST | 启用/停用配对 |
@@ -348,6 +410,7 @@ seafile-MFT/
 │   ├── webhook.py           # Webhook 回调处理（HMAC-SHA256 签名验证）
 │   ├── seafile_version.py   # Seafile 版本检测模块
 │   ├── transfer.py          # Seafile 文件传输（内网下载 → 外网上传）
+│   ├── dlp.py                # DLP 出口扫描集成（提交扫描 + 结果回调）
 │   ├── email_notify.py      # 双 SMTP 邮件通知
 │   ├── i18n/
 │   │   ├── __init__.py      # 翻译管理器（JSON 格式，中文为 key，缺省回退原文）
@@ -407,6 +470,7 @@ sequenceDiagram
 - ✅ **Seafile 认证** — 已实现！用户现在可以通过 Seafile API 直接认证（`AUTH_METHOD=seafile`），除本地和 LDAP 模式外的新选择。
 - ✅ **多库映射（配对仓库）** — 已实现！管理员可在界面上管理多组配对仓库（内网库 ↔ 外网库），支持按名称自动创建或填入已有仓库 ID 复用；轮询器与 Webhook 分别遍历所有启用中的配对仓库
 - ✅ **用户分组与可见性隔离** — 已实现！非管理员用户可归入分组，每个分组绑定一组配对仓库，成员只能查看本分组的仓库内容
+- ✅ **DLP 出口扫描** — 已实现！通过审批的文件在传出前送 scan-worker 微服务（YARA + malcontent）扫描；高危命中会挂起任务等待审核者确认，而非静默放行
 - **审批规则**：基于文件类型、大小自动通过或需要人工审批
 - **多审批人**：实现会签（所有人通过）或或签（一人通过即可）
 - **文件预览**：在审批页添加 PDF / 图片在线预览

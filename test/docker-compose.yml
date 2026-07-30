@@ -355,9 +355,16 @@ services:
       - AUTH_METHOD=local
       - AUTH_SEAFILE=intranet
 
-      # ── 出口 DLP 扫描（scan-worker 集成，默认关闭）──
-      - DLP_ENABLED=true
-      - DLP_GATEWAY_URL=http://scan-gateway:8080
+      # ── 出口 DLP 扫描（scan-worker 集成，默认开启）──
+      # 可用 test/.env 中的同名变量覆盖（docker compose 自动加载同目录 .env）
+      - DLP_ENABLED=${DLP_ENABLED:-true}
+      - DLP_GATEWAY_URL=${DLP_GATEWAY_URL:-http://scan-gateway:8080}
+      # 容器内部回调地址：scan-worker 通过此地址回传扫描结果（与 scan-worker 的 RESULT_WEBHOOK 一致）
+      - DLP_CALLBACK_URL=${DLP_CALLBACK_URL:-http://seafile-mft:8080/internal/dlp-webhook}
+      - DLP_ALERT_SEVERITIES=${DLP_ALERT_SEVERITIES:-critical,high}
+      - DLP_MAX_FILE_SIZE=${DLP_MAX_FILE_SIZE:-104857600}        # 100MB
+      - DLP_SUBMIT_TIMEOUT=${DLP_SUBMIT_TIMEOUT:-30}
+      - DLP_FAIL_CLOSED=${DLP_FAIL_CLOSED:-false}
 
     depends_on:
       seafile-intranet:

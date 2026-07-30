@@ -708,6 +708,48 @@ docker compose logs seafile-mft 2>&1 | grep -i "email\|审核邮件" | tail -10
 - ✅ 管理员/审核者可查看全部配对相关任务
 - ✅ 未分组用户被禁止上传并收到明确提示
 
+---
+
+### 测试 19：DLP 出口扫描（泄露→挂起，干净→自动放行）
+
+**目的**：验证开启 DLP 后，含源码+密钥的文件会在传出前**挂起等待审核者确认**，而干净文件会被**自动放行**并传输。
+
+**前置条件**：
+- 完整测试栈（含已集成的 scan-worker 扫描栈）一体启动——直接在 `test/` 目录下执行：
+  ```bash
+  cd test && docker compose up -d
+  ```
+  这会一同启动内网/外网 Seafile、MFT，以及集成在同一 `intranet-net` 网络上的 scan-worker 栈（`scan-gateway` / `scan-kafka` / `scan-minio` / `scan-worker`）。**不要**单独启动 `../scan-worker`——那是独立栈，服务名不同且不在同一网络，MFT 无法访问。
+- DLP 在 `test/docker-compose.yml` 中默认开启（`DLP_ENABLED=true`、`DLP_GATEWAY_URL=http://scan-gateway:8080`；完整的 `DLP_*` 配置项均已声明，并可通过 `test/.env` 覆盖）。如需调整，修改这两行（或在 `test/.env` 中设置同名变量），再 `docker compose up -d` 重启 MFT。
+
+**步骤**：
+
+1. 运行**泄露**场景（zip 内含 AWS 密钥 + Python/C 源码，会命中 `critical`/`high` 规则）：
+   ```bash
+   cd test
+   python dlp_e2e.py leak
+   ```
+2. 查看 MFT 日志——任务应进入 `dlp_state=alert` 且**不会**被传输：
+   ```bash
+   docker compose logs seafile-mft 2>&1 | grep -i "DLP"
+   # [DLP] task#N 命中敏感内容，已挂起等待审核者确认
+   ```
+3. 登录 MFT → **审核看板**；该任务同时出现在 **⚠️ DLP 待确认** 标签与 **待审批** 列表中，带有 DLP 告警徽标及「确认误报/放行」「确认泄露/拦截」按钮。
+4. 点击**确认误报/放行** → 文件传输到外网 Seafile。
+5. 运行**干净**场景：
+   ```bash
+   python dlp_e2e.py clean
+   ```
+6. 干净文件经扫描后返回 `verdict=clean`，**自动传输**，无需挂起。
+
+**验证点**：
+- ✅ 泄露 zip → DLP 告警 → 挂起（`dlp_state=alert`），在审核者决策前不传输
+- ✅ 审核者将误报放行 → 传输进行
+- ✅ 干净文件 → `verdict=clean` → 自动放行，传输进行
+- ✅ DLP 命中（规则、严重度、`source=malcontent`/`YARA`）被记录并在审核看板可见
+
+> `dlp_e2e.py` 通过 Web 上传接口提交，使用真实形态的 AWS 密钥字符串 + Python/C 源码，确保能稳定命中 `critical`/`high` 规则。scan-worker 服务栈须能被 MFT 访问，回调才能送达。
+
 ## 常用命令
 
 ```bash

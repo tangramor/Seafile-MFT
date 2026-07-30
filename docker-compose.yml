@@ -69,12 +69,128 @@ services:
       - DETECTION_MODE=${DETECTION_MODE:-auto}
       # Webhook 签名密钥（Seafile 后台配置 Webhook 时填写相同值，留空则跳过验证）
       - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
+      # ── 出口 DLP 扫描（scan-worker 集成，已并入本栈，默认关闭）──
+      # 开启后文件审批通过、传出外网前送 scan-worker 扫描（同栈 scan-gateway / scan-worker）；
+      # 命中则经下方 DLP_CALLBACK_URL 回传 MFT 挂起等审核。
+      - DLP_ENABLED=${DLP_ENABLED:-false}
+      - DLP_GATEWAY_URL=${DLP_GATEWAY_URL:-http://scan-gateway:8080}
+      # 容器内回调地址：scan-worker 通过此地址回传扫描结果（8080 为 MFT 容器内端口，8081 仅为主机映射端口）
+      - DLP_CALLBACK_URL=${DLP_CALLBACK_URL:-http://seafile-mft:8080/internal/dlp-webhook}
+      - DLP_ALERT_SEVERITIES=${DLP_ALERT_SEVERITIES:-critical,high}
+      - DLP_MAX_FILE_SIZE=${DLP_MAX_FILE_SIZE:-104857600}
+      - DLP_SUBMIT_TIMEOUT=${DLP_SUBMIT_TIMEOUT:-30}
+      - DLP_FAIL_CLOSED=${DLP_FAIL_CLOSED:-false}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 3
 
+  # ══════════════════════════════════════════════════════════
+  #  出口 DLP 扫描栈（scan-worker，已并入根栈，与 seafile-mft 同处 sefile-mft-net 网络）
+  #  文件审批通过、传出外网前送此处扫描；命中则回传 MFT 挂起等审核
+  #  组件：MinIO(暂存) + Kafka(队列) + Gateway(接收) + Worker(解包+YARA+Malcontent)
+  # ══════════════════════════════════════════════════════════
+
+  scan-minio:
+    image: minio/minio:latest
+    container_name: scan-minio
+    restart: unless-stopped
+    networks:
+      - default
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: scanadmin
+      MINIO_ROOT_PASSWORD: Scan@StrongPass2026
+    volumes:
+      - scan-minio-data:/data
+      - /etc/localtime:/etc/localtime
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  scan-kafka:
+    image: bitnami/kafka:3.7
+    container_name: scan-kafka
+    restart: unless-stopped
+    networks:
+      - default
+    volumes:
+      - /etc/localtime:/etc/localtime
+    environment:
+      KAFKA_CFG_NODE_ID: 0
+      KAFKA_CFG_PROCESS_ROLES: controller,broker
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@scan-kafka:9093
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://scan-kafka:9092
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CFG_CONTROLLER_PORT: 9093
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  scan-gateway:
+    build: ./scan-worker/gateway
+    container_name: scan-gateway
+    restart: unless-stopped
+    networks:
+      - default
+    volumes:
+      - /etc/localtime:/etc/localtime
+    environment:
+      MINIO_ENDPOINT: http://scan-minio:9000
+      MINIO_ACCESS_KEY: scanadmin
+      MINIO_SECRET_KEY: Scan@StrongPass2026
+      MINIO_BUCKET: outbound-files
+      KAFKA_BROKER: scan-kafka:9092
+      KAFKA_TOPIC: file-scan-queue
+    depends_on:
+      scan-minio:
+        condition: service_healthy
+      scan-kafka:
+        condition: service_healthy
+
+  scan-worker:
+    build: ./scan-worker/scanner
+    container_name: scan-worker
+    restart: unless-stopped
+    networks:
+      - default
+    environment:
+      KAFKA_BROKER: scan-kafka:9092
+      KAFKA_TOPIC: file-scan-queue
+      KAFKA_GROUP: scanner-group
+      MINIO_ENDPOINT: http://scan-minio:9000
+      MINIO_ACCESS_KEY: scanadmin
+      MINIO_SECRET_KEY: Scan@StrongPass2026
+      MINIO_BUCKET: outbound-files
+      YARA_RULES_DIR: /rules
+      MAX_UNPACK_DEPTH: "5"
+      # 扫描结果回传至 MFT 的 DLP 回调（clean/alert 均发送）
+      # 注意：容器间通信用 MFT 容器内端口 8080（8081 仅为主机映射端口）
+      RESULT_WEBHOOK: http://seafile-mft:8080/internal/dlp-webhook
+      ALERT_WEBHOOK: http://seafile-mft:8080/internal/dlp-webhook
+      LOG_LEVEL: INFO
+    volumes:
+      - /etc/localtime:/etc/localtime
+      - ./scan-worker/rules:/rules:ro       # YARA 规则热加载
+      - scan-worker-cache:/cache
+    depends_on:
+      scan-kafka:
+        condition: service_healthy
+      scan-minio:
+        condition: service_healthy
+
 networks:
   default:
     name: seafile-mft-net
+
+volumes:
+  scan-minio-data:
+  scan-worker-cache:

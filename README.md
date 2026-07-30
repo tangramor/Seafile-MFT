@@ -45,6 +45,7 @@ flowchart TD
 | 🛡️ **File Deduplication** | Smart dedup prevents duplicate review tasks for the same file, even when Seafile creates new commits on access |
 | 🔗 **Paired Repositories (Repo Pairs)** | Admins manage multiple internal↔external Seafile library pairs from the UI. Each pair maps an internal library to a corresponding external library — approved files in the internal library are delivered to the matched external library. Supports auto-creating a same-named repo or reusing existing repo IDs. |
 | 👥 **User Groups & Visibility Isolation** | Non-admin users can be organized into groups; each group is bound to a set of repo pairs, and members can only view/access their own group's repos. |
+| 🛡️ **DLP Outbound Scanning** | Before a file is synced to the external Seafile, it can be sent to the **scan-worker** microservice (YARA + malcontent) for content inspection. High-risk hits (source-code leaks, secrets, malicious behaviors) suspend the task for reviewer confirmation instead of silently transferring. |
 | 🐳 **Docker Deployment** | One-command build; all configuration via environment variables |
 
 ## Quick Start
@@ -135,6 +136,14 @@ uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 | **General** | | |
 | `SECRET_KEY` | Application secret key | `change-me` |
 | `DATABASE_URL` | Database path | `sqlite:///./seafile_mft.db` |
+| **DLP (Outbound Scanning)** | Requires the scan-worker microservice stack (see `scan-worker/`) | |
+| `DLP_ENABLED` | Enable outbound DLP scanning before transfer | `false` |
+| `DLP_GATEWAY_URL` | scan-worker gateway address | `http://scan-gateway:8080` |
+| `DLP_CALLBACK_URL` | Webhook to receive scan results; blank → `{APP_BASE_URL}/internal/dlp-webhook` | — |
+| `DLP_ALERT_SEVERITIES` | Severities (comma-separated) that suspend a task for review | `critical,high` |
+| `DLP_MAX_FILE_SIZE` | Files larger than this (bytes) skip scanning and are released | `104857600` (100 MB) |
+| `DLP_SUBMIT_TIMEOUT` | Timeout (seconds) when submitting a file to the gateway | `30` |
+| `DLP_FAIL_CLOSED` | `true` → block transfer if scan submission fails; `false` → release (default, avoids DLP outages) | `false` |
 
 > **About the repo ID config:** `INTRANET_REPO_ID` / `EXTRANET_REPO_ID` are only used on first deployment to seed the "default pair" into the database (via `seed_default_repo_pair`). All repo pairs (including the default) are then managed from the "Repo Pair Management" page; adding new pairs requires no env changes.
 
@@ -237,6 +246,58 @@ The system traverses the internal library directory every `POLL_INTERVAL_SECONDS
 
 > **Why directory traversal instead of commit diffs?** Seafile 6.x returns 404 for both `GET /api2/repos/{id}/commits/{commit_id}/` and `GET /api2/repos/{id}/history/{commit_id}/`, making it impossible to get per-commit file changes. Directory traversal + mtime comparison is the most reliable approach compatible with all versions.
 
+## Data Loss Prevention (DLP) — Outbound Scanning
+
+When enabled (`DLP_ENABLED=true`), every approved file is **scanned by the scan-worker microservice before it leaves the internal network** — acting as an outbound DLP gate. This catches source-code leaks, embedded secrets, and malicious payloads that an approval review alone might miss.
+
+### How it works
+
+```mermaid
+sequenceDiagram
+    actor Reviewer
+    participant MFT
+    participant Gateway as scan-worker gateway
+    participant Queue as Kafka + MinIO
+    participant Worker as scanner worker
+    participant Extranet as External Seafile
+
+    Reviewer->>MFT: Approve task
+    MFT->>Gateway: POST /upload (file bytes, uploader=mft-task-{id})
+    Gateway->>Queue: store to MinIO + enqueue
+    Queue->>Worker: consume + recursively unpack + scan
+    Worker-->>MFT: POST {verdict, severity, hits} webhook
+    alt verdict=clean / severity below threshold
+        MFT->>Extranet: Auto-transfer file
+    else verdict=alert (severity in DLP_ALERT_SEVERITIES)
+        MFT->>MFT: Suspend task (dlp_state=alert), notify reviewer
+        Reviewer->>MFT: Confirm false-positive → release / Confirm leak → block
+    end
+```
+
+1. After a reviewer **approves** a task, MFT submits the file bytes to the scan-worker gateway (`DLP_GATEWAY_URL`).
+2. The gateway stores the file in MinIO and publishes it to a Kafka queue.
+3. A scanner worker consumes the message, **recursively unpacks** archives (`zip`/`tar`/`gz`/`bz2`/`xz`/`7z`) and scans each layer:
+   - **YARA** rules detect source-code leaks, embedded archives, secret tokens (AWS/GitHub/Google/Slack/JWT/PEM), binary-source bundling, and packer/obfuscation.
+   - **malcontent** (`mal`) detects malicious behaviors — reverse shells, credential stealers, RATs, packers — using its built-in rule set.
+4. The scanner posts a result `{verdict, severity, hits}` back to MFT's callback (`DLP_CALLBACK_URL`, default `{APP_BASE_URL}/internal/dlp-webhook`).
+5. MFT decides:
+   - `verdict=clean` **or** severity below `DLP_ALERT_SEVERITIES` → **auto-release**, the transfer proceeds.
+   - `verdict=alert` **and** severity in `DLP_ALERT_SEVERITIES` → **suspend** the task (`dlp_state=alert`), record hit details, and notify the reviewer to confirm.
+
+### Why suspend instead of hard-block?
+
+False positives are inevitable (e.g. legitimate source code inside a build artifact). The default policy **suspends for human confirmation** rather than silently blocking, so a false alarm never breaks business — yet a confirmed leak never leaves. The reviewer can release a false-positive or block a confirmed leak from the review board.
+
+### Review Board integration
+
+DLP-suspended tasks appear both under the **⚠️ DLP Pending** tab (`/review-board?dlp=alert`) **and** in the **Pending** list, each marked with a DLP alert badge and **Confirm false-positive / release** + **Confirm leak / block** buttons.
+
+### scan-worker deployment
+
+scan-worker is an independent `docker-compose` stack under `scan-worker/`. Its `scanner`/`sandbox` images are built from `cgr.dev/chainguard/malcontent:latest` (Wolfi) and bundle the `mal` binary + YARA. See [`scan-worker/README.md`](./scan-worker/README.md) for architecture, YARA rules, and operations.
+
+> **Fail-open / fail-closed:** if the scan submission fails, `DLP_FAIL_CLOSED=false` (default) lets the file through to avoid DLP outages blocking business; set `true` to intercept on failure. Files larger than `DLP_MAX_FILE_SIZE` are skipped and released directly.
+
 ## Authentication Modes
 
 The system supports three authentication methods, controlled by the `AUTH_METHOD` environment variable:
@@ -322,6 +383,7 @@ LDAP user roles are mapped via AD groups: members of `LDAP_ADMIN_GROUP` become a
 | `/admin/users/{id}/delete` | POST | Delete local user (admin only) |
 | `/admin/audit-log` | GET | Audit log (reviewer/admin) |
 | `/webhook/seafile` | POST | Seafile Webhook callback (Webhook mode only) |
+| `/internal/dlp-webhook` | POST | scan-worker result callback (DLP outbound scan) |
 | `/admin/repo-pairs` | GET | Repo pair management page |
 | `/admin/repo-pairs/create` | POST | Create a pair (optionally with existing repo IDs) |
 | `/admin/repo-pairs/{id}/toggle` | POST | Enable/disable a pair |
@@ -350,6 +412,7 @@ seafile-MFT/
 │   ├── webhook.py           # Webhook callback handling (HMAC-SHA256 signature verification)
 │   ├── seafile_version.py   # Seafile version detection module
 │   ├── transfer.py          # Seafile file transfer (internal download → external upload)
+│   ├── dlp.py                # DLP outbound-scan integration (submit scan + result callback)
 │   ├── email_notify.py      # Dual SMTP email notifications
 │   ├── i18n/
 │   │   ├── __init__.py      # Translation manager (JSON-based, Chinese as key, fallback to original text)
@@ -409,6 +472,7 @@ sequenceDiagram
 - ✅ **Seafile auth** — Implemented! Users can now authenticate directly via Seafile API (`AUTH_METHOD=seafile`), in addition to local and LDAP modes.
 - ✅ **Multi-library mapping (repo pairs)** — Implemented! Admins manage multiple paired repos (internal↔external) from the UI, with auto-create-by-name or reuse of existing repo IDs; the poller and Webhook iterate over all enabled pairs.
 - ✅ **User groups & visibility isolation** — Implemented! Non-admin users are grouped; each group binds a set of repo pairs, and members only see their own group's repos.
+- ✅ **DLP outbound scanning** — Implemented! Approved files are scanned by the scan-worker microservice (YARA + malcontent) before transfer; high-risk hits suspend the task for reviewer confirmation instead of silently releasing.
 - **Approval rules**: Auto-approve or require manual review based on file type, size, etc.
 - **Multi-reviewer**: Implement countersign (all must approve) or or-sign (anyone can approve)
 - **File preview**: Add PDF/image online preview on the review page

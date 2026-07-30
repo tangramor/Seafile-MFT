@@ -711,6 +711,48 @@ docker compose logs seafile-mft 2>&1 | grep -i "email\|reviewer" | tail -10
 - ✅ Admins/reviewers can see all pair-related tasks
 - ✅ Ungrouped users are blocked from uploading with a clear message
 
+---
+
+### Test 19: DLP Outbound Scanning (leak → suspend, clean → auto-release)
+
+**Objective**: Verify that with DLP enabled, a file containing source code + secrets is **suspended for reviewer confirmation** before it leaves, while a clean file is **auto-released** and transferred.
+
+**Prerequisites**:
+- The full test stack (including the integrated scan-worker scanning stack) is brought up together — just run from the `test/` directory:
+  ```bash
+  cd test && docker compose up -d
+  ```
+  This starts the intranet/extranet Seafile, MFT, and the integrated scan-worker stack (`scan-gateway` / `scan-kafka` / `scan-minio` / `scan-worker`) all on the same `intranet-net` network. Do **not** start `../scan-worker` separately — that is a standalone stack with different service names and will not be reachable from MFT.
+- DLP is enabled by default in `test/docker-compose.yml` (`DLP_ENABLED=true`, `DLP_GATEWAY_URL=http://scan-gateway:8080`; the full set of `DLP_*` vars is also declared there and overridable via `test/.env`). To toggle, edit those lines (or set the same variables in `test/.env`), then `docker compose up -d` to restart MFT.
+
+**Steps**:
+
+1. Run the **leak** scenario (a zip embedding AWS keys + Python/C source — trips `critical`/`high` rules):
+   ```bash
+   cd test
+   python dlp_e2e.py leak
+   ```
+2. Check MFT logs — the task should reach `dlp_state=alert` and **not** be transferred:
+   ```bash
+   docker compose logs seafile-mft 2>&1 | grep -i "DLP"
+   # [DLP] task#N 命中敏感内容，已挂起等待审核者确认
+   ```
+3. Log into MFT → **Review Board**; the task appears under both the **⚠️ DLP 待确认** tab and the **Pending** list, with a DLP alert badge and **Confirm false-positive / release** + **Confirm leak / block** buttons.
+4. Click **Confirm false-positive / release** → the file transfers to external Seafile.
+5. Run the **clean** scenario:
+   ```bash
+   python dlp_e2e.py clean
+   ```
+6. The clean file is scanned, returns `verdict=clean`, and is **auto-transferred** without suspension.
+
+**Verification points**:
+- ✅ leak zip → DLP alert → suspended (`dlp_state=alert`), no transfer until reviewer decides
+- ✅ reviewer releases a false-positive → transfer proceeds
+- ✅ clean file → `verdict=clean` → auto-release, transfer proceeds
+- ✅ DLP hits (rule, severity, `source=malcontent`/`YARA`) recorded and visible on the review board
+
+> `dlp_e2e.py` uploads through the web UI using real AWS-shaped secret strings + Python/C source so it reliably trips `critical`/`high` rules. The scan-worker stack must be reachable from MFT for the callback to land.
+
 ## Common Commands
 
 ```bash

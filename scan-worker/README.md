@@ -1,97 +1,102 @@
-# 出口扫描 Worker - 架构 & 部署指南
+# Outbound Scanning Worker — Architecture & Deployment Guide
 
-## 架构概览
+English | [中文](./README_zh.md)
+
+## Architecture Overview
 
 ```
-文件入口 --> 对象存储暂存 --> Kafka 队列 --> 扫描 Worker (解包->分类->YARA)
-                                                    |
-                                          +---------+---------+
-                                          |                   |
-                                     沙箱(加壳处理)      风险判定
-                                          |                   |
-                                          +--------+----------+
-                                                   |
-                                          告警分发 + 审计日志
+File Entry --> Object Storage Staging --> Kafka Queue --> Scan Worker (unpack -> classify -> YARA -> malcontent)
+                                                                       |
+                                                             +---------+---------+
+                                                             |                   |
+                                                       Sandbox (packing)    Risk Assessment
+                                                             |                   |
+                                                             +--------+----------+
+                                                                      |
+                                                       Alert Dispatch + Audit Log
 ```
 
-## 快速启动
+> **About malcontent**: The `scanner` / `sandbox` images are built in multiple stages from `cgr.dev/chainguard/malcontent:latest` (the Wolfi distribution) — the `/usr/bin/mal` binary is extracted from that base image and copied into the Wolfi runtime. On top of the existing YARA rules, the scan pipeline additionally invokes `mal scan` for malicious-behavior detection (reverse shells, credential theft, packing/obfuscation, suspicious downloaders, etc.). Hits are folded into the results in the same structure as YARA hits, and `decide_severity` uniformly takes the highest severity. See `scanner/mal_scanner.py` for details.
+
+## Quick Start
 
 ```bash
-# 1. 克隆/进入项目目录
+# 1. Clone / enter the project directory
 cd scan-worker
 
-# 2. 启动全部服务
+# 2. Start all services
 docker compose up -d
 
-# 3. 查看 Worker 日志
+# 3. Tail the Worker logs
 docker compose logs -f scanner-worker
 
-# 4. 运行测试
+# 4. Run the tests
 python test_scan.py
 ```
 
-## 目录结构
+## Directory Structure
 
 ```
 scan-worker/
-├── docker-compose.yml          # 编排文件
-├── architecture.py             # 架构图生成脚本
-├── architecture.png            # 架构图
+├── docker-compose.yml          # Orchestration file
+├── architecture.py             # Architecture diagram generator
+├── architecture.png            # Architecture diagram
 ├── README.md
 │
-├── gateway/                    # 入口网关
+├── gateway/                    # Ingestion gateway
 │   ├── Dockerfile
-│   └── app.py                 # Flask 接收上传
+│   └── app.py                 # Flask upload receiver
 │
-├── scanner/                    # 扫描 Worker
+├── scanner/                    # Scan Worker
 │   ├── Dockerfile
-│   ├── scanner.py              # 主循环
-│   ├── unpacker.py            # 递归解包
-│   ├── classifier.py          # 文件分类
-│   └── yara_scanner.py       # YARA 引擎
+│   ├── scanner.py              # Main loop (unpack -> classify -> YARA -> malcontent)
+│   ├── unpacker.py            # Recursive unpacking
+│   ├── classifier.py          # File classification
+│   ├── yara_scanner.py       # YARA engine
+│   └── mal_scanner.py        # malcontent malicious-behavior scan (mal binary invocation + result mapping)
 │
-├── sandbox/                    # 沙箱(加壳处理)
+├── sandbox/                    # Sandbox (packing handling)
 │   ├── Dockerfile
 │   └── sandbox.py
 │
-├── rules/                      # YARA 规则 (热加载)
-│   ├── source_code_leak.yar   # 源码泄露检测
-│   ├── embedded_archive.yar   # 嵌入压缩包检测
-│   ├── secret_token.yar       # 密钥/令牌检测
-│   ├── binary_source.yar      # 二进制夹带源码
-│   └── packer_obfuscation.yar # 加壳/混淆检测
+├── rules/                      # YARA rules (hot-reloaded)
+│   ├── source_code_leak.yar   # Source code leak detection
+│   ├── embedded_archive.yar   # Embedded archive detection
+│   ├── secret_token.yar       # Secret/token detection
+│   ├── binary_source.yar      # Source code smuggled inside binaries
+│   └── packer_obfuscation.yar # Packer/obfuscation detection
 │
-├── alertmanager.yml            # 告警路由配置
-└── test_scan.py               # 端到端测试脚本
+├── alertmanager.yml            # Alert routing configuration
+└── test_scan.py               # End-to-end test script
 ```
 
-## YARA 规则说明
+## YARA Rules Reference
 
-| 文件 | 作用 | 严重等级 |
-|------|------|----------|
-| source_code_leak.yar | C/C++/Go/Rust/Py/Java/JS/Shell 源码指纹 | high |
-| embedded_archive.yar | ZIP/GZIP/BZIP2/XZ/7Z/RAR/SquashFS 嵌入检测 | medium |
-| secret_token.yar | AWS/GitHub/Google/Slack 密钥 + JWT + PEM 私钥 | critical |
-| binary_source.yar | ELF/PE 中夹带的源码字符串/调试信息 | high |
-| packer_obfuscation.yar | UPX/Themida/VMProtect/ConfuserEx 加壳检测 | medium-high |
+| File | Purpose | Severity |
+|------|---------|----------|
+| source_code_leak.yar | C/C++/Go/Rust/Py/Java/JS/Shell source fingerprints | high |
+| embedded_archive.yar | Embedded ZIP/GZIP/BZIP2/XZ/7Z/RAR/SquashFS detection | medium |
+| secret_token.yar | AWS/GitHub/Google/Slack keys + JWT + PEM private keys | critical |
+| binary_source.yar | Source strings / debug info smuggled in ELF/PE | high |
+| packer_obfuscation.yar | UPX/Themida/VMProtect/ConfuserEx packing detection | medium-high |
 
-## 热更新规则
+## Hot-Reloading Rules
 
 ```bash
-# 修改 rules/ 下的 .yar 文件后, Worker 会自动重载 (无需重启)
-# 或者手动触发:
+# After editing the .yar files under rules/, the Worker reloads automatically (no restart needed)
+# Or trigger manually:
 docker compose restart scanner-worker
 ```
 
-## 扩展 Worker 数量
+## Scaling the Worker Count
 
 ```bash
 docker compose up -d --scale scanner-worker=10
 ```
 
-## API 接口
+## API Endpoints
 
-### 上传文件
+### Upload a File
 ```bash
 curl -X POST http://localhost:8080/upload \
   -F "file=@suspicious.zip" \
@@ -99,12 +104,12 @@ curl -X POST http://localhost:8080/upload \
   -F "source_ip=10.0.0.5"
 ```
 
-### 健康检查
+### Health Check
 ```bash
 curl http://localhost:8080/health
 ```
 
-## 告警示例 (Alertmanager Webhook)
+## Alert Example (Alertmanager Webhook)
 
 ```json
 {
@@ -120,9 +125,9 @@ curl http://localhost:8080/health
 }
 ```
 
-## 注意事项
+## Notes
 
-1. **密码压缩包**: 当前版本不支持密码破解, 建议配合 `zip2john` + hashcat 扩展
-2. **大文件**: 建议网关层限制单文件大小 (如 500MB)
-3. **性能**: 单 Worker 约 50-100 文件/分钟 (取决于文件大小和解包深度)
-4. **误报调优**: 调整 YARA 规则的 `condition` 阈值, 或在 classifier.py 中增加白名单
+1. **Password-protected archives**: The current version does not support password cracking; consider extending with `zip2john` + hashcat.
+2. **Large files**: It is recommended to cap individual file size at the gateway layer (e.g. 500MB).
+3. **Performance**: A single Worker handles roughly 50–100 files/minute (depending on file size and unpacking depth).
+4. **False-positive tuning**: Adjust the `condition` thresholds in the YARA rules, or add allowlist entries in `classifier.py`.
