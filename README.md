@@ -22,8 +22,12 @@ flowchart TD
     C --> D["✉️ Email notification to reviewer<br>（with one-click approve/reject link）"]
     D --> E["👀 Reviewer opens review board<br>reviews details, approves/rejects"]
     E --> F{"⚖️ Decision"}
-    F -->|"✅ Approved"| G["🔄 Auto sync to<br>external Seafile"]
-    F -->|"❌ Rejected"| H["📢 Notify submitter"]
+    F -->|"✅ Approved"| I{"🛡️ DLP outbound scan<br>(scan-worker, if enabled)"}
+    I -->|"clean / below threshold"| G["🔄 Auto sync to<br>external Seafile"]
+    I -->|"alert: high-risk hit"| J["⏸️ Suspend task for<br>reviewer confirmation"]
+    J -->|"release false-positive"| G
+    J -->|"confirm leak / block"| H["📢 Notify submitter (blocked)"]
+    F -->|"❌ Rejected"| H
 ```
 
 ### Key Features
