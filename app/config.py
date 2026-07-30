@@ -86,6 +86,17 @@ class Settings(BaseSettings):
     poll_interval_seconds: int = 60   # 轮询间隔（秒），建议 30~300
     poll_on_startup: bool = True       # 启动时立即执行一次轮询
 
+    # ── DLP（出口扫描，集成 scan-worker 微服务）──
+    # 设为 true 后，审批通过、文件传出外网前会先送 scan-worker 扫描；
+    # 命中（达到 dlp_alert_severities）则挂起等审核者确认，干净则自动放行。
+    dlp_enabled: bool = False
+    dlp_gateway_url: str = "http://scan-gateway:8080"   # scan-worker 网关地址
+    dlp_callback_url: str = ""                          # 接收扫描结果的 webhook；留空则取 {app_base_url}/internal/dlp-webhook
+    dlp_alert_severities: str = "critical,high"         # 达到这些严重度才挂起等审核（逗号分隔）
+    dlp_max_file_size: int = 100 * 1024 * 1024          # 超过此大小（默认 100MB）跳过扫描直接放行
+    dlp_submit_timeout: int = 30                         # 提交网关超时（秒）
+    dlp_fail_closed: bool = False                        # True=扫描提交失败则拦截不放行；False=放行（默认，避免 DLP 故障阻断业务）
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

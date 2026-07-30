@@ -38,6 +38,8 @@ volumes:
   extranet-db-data:
   extranet-seafile-data:
   mft-data:
+  scan-minio-data:
+  scan-worker-cache:
 
 services:
 
@@ -53,6 +55,7 @@ services:
       - intranet-net
     volumes:
       - intranet-db-data:/var/lib/mysql
+      - /etc/localtime:/etc/localtime
     environment:
       - MYSQL_ROOT_PASSWORD=seafile123
       - MYSQL_LOG_CONSOLE=true
@@ -71,6 +74,8 @@ services:
       intranet-net:
         aliases:
           - memcached                            # Seafile 硬编码连接 host:memcached
+    volumes:
+      - /etc/localtime:/etc/localtime
     command: memcached -m 256
     healthcheck:
       test: ["CMD", "nc", "-z", "127.0.0.1", "11211"]
@@ -91,6 +96,7 @@ services:
       - "8001:80"
     volumes:
       - intranet-seafile-data:/shared
+      - /etc/localtime:/etc/localtime
     environment:
       - TZ=Asia/Shanghai
       - DB_HOST=seafile-intranet-db
@@ -125,6 +131,7 @@ services:
       - extranet-net
     volumes:
       - extranet-db-data:/var/lib/mysql
+      - /etc/localtime:/etc/localtime
     environment:
       - MYSQL_ROOT_PASSWORD=seafile123
       - MYSQL_LOG_CONSOLE=true
@@ -143,6 +150,8 @@ services:
       extranet-net:
         aliases:
           - memcached                            # Seafile 硬编码连接 host:memcached
+    volumes:
+      - /etc/localtime:/etc/localtime
     command: memcached -m 256
     healthcheck:
       test: ["CMD", "nc", "-z", "127.0.0.1", "11211"]
@@ -163,6 +172,7 @@ services:
       - "8002:80"
     volumes:
       - extranet-seafile-data:/shared
+      - /etc/localtime:/etc/localtime
     environment:
       - TZ=Asia/Shanghai
       - DB_HOST=seafile-extranet-db
@@ -186,6 +196,106 @@ services:
       start_period: 90s
 
   # ══════════════════════════════════════════════════════════
+  #  出口 DLP 扫描栈（scan-worker，集成到同一 intranet-net）
+  #  文件审批通过、传出外网前送此处扫描；命中则回传 MFT 挂起等审核
+  # ══════════════════════════════════════════════════════════
+
+  scan-minio:
+    image: minio/minio:latest
+    container_name: scan-minio
+    restart: unless-stopped
+    networks:
+      - intranet-net
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: scanadmin
+      MINIO_ROOT_PASSWORD: Scan@StrongPass2026
+    volumes:
+      - scan-minio-data:/data
+      - /etc/localtime:/etc/localtime
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  scan-kafka:
+    image: bitnami/kafka:3.7
+    container_name: scan-kafka
+    restart: unless-stopped
+    networks:
+      - intranet-net
+    volumes:
+      - /etc/localtime:/etc/localtime
+    environment:
+      KAFKA_CFG_NODE_ID: 0
+      KAFKA_CFG_PROCESS_ROLES: controller,broker
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@scan-kafka:9093
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://scan-kafka:9092
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CFG_CONTROLLER_PORT: 9093
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  scan-gateway:
+    build: ../scan-worker/gateway
+    container_name: scan-gateway
+    restart: unless-stopped
+    networks:
+      - intranet-net
+    volumes:
+      - /etc/localtime:/etc/localtime
+    environment:
+      MINIO_ENDPOINT: http://scan-minio:9000
+      MINIO_ACCESS_KEY: scanadmin
+      MINIO_SECRET_KEY: Scan@StrongPass2026
+      MINIO_BUCKET: outbound-files
+      KAFKA_BROKER: scan-kafka:9092
+      KAFKA_TOPIC: file-scan-queue
+    depends_on:
+      scan-minio:
+        condition: service_healthy
+      scan-kafka:
+        condition: service_healthy
+
+  scan-worker:
+    build: ../scan-worker/scanner
+    container_name: scan-worker
+    restart: unless-stopped
+    networks:
+      - intranet-net
+    environment:
+      KAFKA_BROKER: scan-kafka:9092
+      KAFKA_TOPIC: file-scan-queue
+      KAFKA_GROUP: scanner-group
+      MINIO_ENDPOINT: http://scan-minio:9000
+      MINIO_ACCESS_KEY: scanadmin
+      MINIO_SECRET_KEY: Scan@StrongPass2026
+      MINIO_BUCKET: outbound-files
+      YARA_RULES_DIR: /rules
+      MAX_UNPACK_DEPTH: "5"
+      # 扫描结果回传至 MFT 的 DLP 回调（clean/alert 均发送）
+      # 注意：容器间通信用 MFT 容器内端口 8080（8081 仅为主机映射端口）
+      RESULT_WEBHOOK: http://seafile-mft:8080/internal/dlp-webhook
+      ALERT_WEBHOOK: http://seafile-mft:8080/internal/dlp-webhook
+      LOG_LEVEL: INFO
+    volumes:
+      - /etc/localtime:/etc/localtime
+      - ../scan-worker/rules:/rules:ro       # YARA 规则热加载
+      - scan-worker-cache:/cache
+    depends_on:
+      scan-kafka:
+        condition: service_healthy
+      scan-minio:
+        condition: service_healthy
+
+  # ══════════════════════════════════════════════════════════
   #  MFT 审核应用 —— 连接内网和外网两个网络
   # ══════════════════════════════════════════════════════════
 
@@ -200,6 +310,7 @@ services:
     ports:
       - "8081:8080"
     volumes:
+      - /etc/localtime:/etc/localtime
       - mft-data:/app/data
     environment:
       - TZ=Asia/Shanghai
@@ -243,6 +354,10 @@ services:
       # ── 认证方式 ──
       - AUTH_METHOD=local
       - AUTH_SEAFILE=intranet
+
+      # ── 出口 DLP 扫描（scan-worker 集成，默认关闭）──
+      - DLP_ENABLED=true
+      - DLP_GATEWAY_URL=http://scan-gateway:8080
 
     depends_on:
       seafile-intranet:

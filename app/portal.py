@@ -23,8 +23,9 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, File
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from .auth import (
@@ -52,8 +53,10 @@ from .models import (
     RepoPair, UserGroup, UserGroupMember, GroupRepoPair,
     get_accessible_pair_ids, get_db,
 )
-from .transfer import SeafileClient, transfer_file_to_extranet
+from .transfer import SeafileClient, transfer_file_to_extranet, run_transfer_pipeline, get_task_file_bytes
 from .audit import log_action
+from .dlp import submit_scan, handle_dlp_result
+from .config import get_settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -208,7 +211,10 @@ async def dashboard(
 ):
     with get_db() as db:
         if current_user.is_reviewer:
-            query = db.query(ReviewTask).filter(ReviewTask.status == ReviewStatus.PENDING)
+            query = db.query(ReviewTask).filter(
+                or_(ReviewTask.status == ReviewStatus.PENDING,
+                    ReviewTask.dlp_state == "alert")
+            )
             query, _ = _apply_pair_filter(query, db, current_user)
             pending_count = query.count()
             my_count = None
@@ -411,6 +417,7 @@ async def review_board(
     request: Request,
     page: int = 1,
     status: str = "pending",
+    dlp: str = "",
     current_user: CurrentUser = Depends(require_reviewer),
 ):
     page_size = 20
@@ -418,14 +425,34 @@ async def review_board(
 
     with get_db() as db:
         query = db.query(ReviewTask).order_by(ReviewTask.created_at.desc())
-        if status:
+        if dlp == "alert":
+            # 仅看 DLP 命中待审核的任务
+            query = query.filter(ReviewTask.dlp_state == "alert")
+        elif status:
             try:
-                query = query.filter(ReviewTask.status == ReviewStatus(status))
+                target = ReviewStatus(status)
+                if target == ReviewStatus.PENDING:
+                    # 待审批：同时包含 DLP 命中挂起、等待审核者处置的文件
+                    # （DLP alert 的任务 status 通常为 APPROVED，否则会从待审批列表消失）
+                    query = query.filter(
+                        or_(ReviewTask.status == ReviewStatus.PENDING,
+                            ReviewTask.dlp_state == "alert")
+                    )
+                else:
+                    query = query.filter(ReviewTask.status == target)
             except ValueError:
                 pass
         query, _ = _apply_pair_filter(query, db, current_user)
         total = query.count()
         tasks = query.offset(offset).limit(page_size).all()
+
+    # 预解析 DLP 命中详情，方便模板展示
+    import json
+    for t in tasks:
+        try:
+            t.dlp_hits_json = json.loads(t.dlp_hits) if t.dlp_hits else []
+        except (json.JSONDecodeError, TypeError):
+            t.dlp_hits_json = []
 
     return templates.TemplateResponse(
         "review_board.html",
@@ -437,6 +464,7 @@ async def review_board(
             "total": total,
             "page_size": page_size,
             "current_status": status,
+            "current_dlp": dlp,
             "status_labels": STATUS_LABELS,
         },
     )
@@ -467,7 +495,7 @@ async def board_approve(
                {"file_name": task.file_name, "uploader": task.uploader, "comment": comment},
                ip_address=request.client.host if request.client else "")
 
-    asyncio.create_task(_transfer_and_notify(task_id))
+    asyncio.create_task(_dlp_gate_and_transfer(task_id))
 
     return RedirectResponse(
         f"/review-board?status=pending&msg=approved&id={task_id}",
@@ -506,6 +534,86 @@ async def board_reject(
         f"/review-board?status=pending&msg=rejected&id={task_id}",
         status_code=302,
     )
+
+
+# ─────────────────────────────────────────────
+# DLP（出口扫描）回调与审核者处置
+# ─────────────────────────────────────────────
+
+@router.post("/internal/dlp-webhook", response_class=JSONResponse)
+async def dlp_webhook(request: Request):
+    """
+    scan-worker 扫描结果回传入口（RESULT_WEBHOOK）。
+    接收 JSON：{verdict, uploader, severity, hits, ...}
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid json"}, status_code=400)
+    await handle_dlp_result(payload)
+    return JSONResponse({"ok": True})
+
+
+@router.post("/review-board/{task_id}/dlp-release", response_class=HTMLResponse)
+async def board_dlp_release(
+    request: Request,
+    task_id: int,
+    comment: str = Form(default=""),
+    current_user: CurrentUser = Depends(require_reviewer),
+):
+    """审核者确认 DLP 命中为误报 → 强制放行传输。"""
+    with get_db() as db:
+        task = db.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+        if not task:
+            raise HTTPException(status_code=404, detail=_("任务不存在"))
+        if task.dlp_state != "alert":
+            raise HTTPException(status_code=400, detail=_("该任务无待确认的 DLP 告警"))
+
+        task.dlp_state = "released"
+        task.dlp_reviewed_by = current_user.username
+        task.dlp_reviewed_at = datetime.utcnow()
+        task.dlp_comment = comment
+        db.commit()
+        db.refresh(task)
+
+    log_action(current_user.username, "dlp_release", "review_task", task_id,
+               {"file_name": task.file_name, "comment": comment},
+               ip_address=request.client.host if request.client else "")
+    asyncio.create_task(run_transfer_pipeline(task_id))
+
+    return RedirectResponse(
+        f"/review-board?status=&msg=dlp_released&id={task_id}", status_code=302)
+
+
+@router.post("/review-board/{task_id}/dlp-block", response_class=HTMLResponse)
+async def board_dlp_block(
+    request: Request,
+    task_id: int,
+    comment: str = Form(default=""),
+    current_user: CurrentUser = Depends(require_reviewer),
+):
+    """审核者确认 DLP 命中属实 → 拦截（拒绝传输）。"""
+    with get_db() as db:
+        task = db.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+        if not task:
+            raise HTTPException(status_code=404, detail=_("任务不存在"))
+        if task.dlp_state != "alert":
+            raise HTTPException(status_code=400, detail=_("该任务无待确认的 DLP 告警"))
+
+        task.dlp_state = "blocked"
+        task.status = ReviewStatus.REJECTED
+        task.dlp_reviewed_by = current_user.username
+        task.dlp_reviewed_at = datetime.utcnow()
+        task.dlp_comment = comment
+        task.reviewer_comment = (task.reviewer_comment + "\n[DLP] " + comment).strip()
+        db.commit()
+        db.refresh(task)
+
+    log_action(current_user.username, "dlp_block", "review_task", task_id,
+               {"file_name": task.file_name, "comment": comment},
+               ip_address=request.client.host if request.client else "")
+    return RedirectResponse(
+        f"/review-board?status=rejected&msg=dlp_blocked&id={task_id}", status_code=302)
 
 
 # ─────────────────────────────────────────────
@@ -968,30 +1076,50 @@ async def set_language(locale: str, request: Request):
 
 
 # ─────────────────────────────────────────────
-# 内部：传输并通知（复用 review.py 逻辑）
+# 内部：传输闸门（审批通过后调用）
+# 若启用 DLP，则先送 scan-worker 扫描，按结果决定是否放行；否则直接传输。
 # ─────────────────────────────────────────────
 
-async def _transfer_and_notify(task_id: int):
-    from .models import get_db as _get_db
-    with _get_db() as db:
-        task = db.query(ReviewTask).filter(ReviewTask.id == task_id).first()
-        if not task:
+async def _dlp_gate_and_transfer(task_id: int):
+    settings = get_settings()
+    if settings.dlp_enabled:
+        with get_db() as db:
+            task = db.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+            if not task:
+                return
+            # 1) 下载待扫描文件
+            try:
+                file_bytes = await get_task_file_bytes(task)
+            except Exception as e:
+                log_action("system", "dlp_scan_failed", "review_task", task_id, {"error": str(e)})
+                if settings.dlp_fail_closed:
+                    task.dlp_state = "blocked"
+                    task.status = ReviewStatus.REJECTED
+                    db.commit()
+                    return
+                await run_transfer_pipeline(task_id)   # fail-open
+                return
+            # 2) 提交扫描
+            ok = await submit_scan(task, file_bytes, task.file_name)
+            if ok:
+                task.dlp_state = "scanning"
+                db.commit()
+                return  # 等待 scan-worker 结果回调
+            # 提交失败
+            if settings.dlp_fail_closed:
+                task.dlp_state = "blocked"
+                task.status = ReviewStatus.REJECTED
+                db.commit()
+                log_action("system", "dlp_blocked", "review_task", task_id,
+                           {"reason": "scan_submit_failed"})
+                return
+            log_action("system", "dlp_submit_failed", "review_task", task_id,
+                       {"note": "fail-open 放行"})
+            await run_transfer_pipeline(task_id)   # fail-open
             return
-        success, error_msg, extranet_path = await transfer_file_to_extranet(task)
-        if success:
-            task.status = ReviewStatus.TRANSFERRED
-            task.extranet_file_path = extranet_path
-            task.transferred_at = datetime.utcnow()
-            log_action("system", "task_transferred", "review_task", task_id,
-                       {"file_name": task.file_name, "extranet_path": extranet_path})
-        else:
-            task.status = ReviewStatus.FAILED
-            task.transfer_error = error_msg
-            log_action("system", "task_failed", "review_task", task_id,
-                       {"file_name": task.file_name, "error": error_msg})
-        db.commit()
-        db.refresh(task)
-        await send_result_notification(task)
+
+    # DLP 未启用：直接执行传输管线
+    await run_transfer_pipeline(task_id)
 
 
 # ─────────────────────────────────────────────

@@ -21,7 +21,10 @@ from urllib.parse import urlparse, urlunparse
 import httpx
 
 from .config import get_settings
-from .models import ReviewTask, RepoPair, get_db
+from .models import ReviewTask, RepoPair, ReviewStatus, get_db
+from .audit import log_action
+from .email_notify import send_result_notification
+from datetime import datetime
 
 
 class SeafileClient:
@@ -250,3 +253,52 @@ async def transfer_file_to_extranet(
         error_msg = str(e)
         print(f"[Transfer] Failed: {error_msg}")
         return False, error_msg, ""
+
+
+async def get_task_file_bytes(task: ReviewTask) -> bytes:
+    """
+    下载内网文件字节（供 DLP 提交给 scan-worker 扫描使用）。
+    返回文件原始内容。
+    """
+    settings = get_settings()
+    intranet_repo_id = task.repo_id
+    if task.repo_pair_id:
+        with get_db() as db:
+            pair = db.query(RepoPair).filter(RepoPair.id == task.repo_pair_id).first()
+            if pair:
+                intranet_repo_id = pair.intranet_repo_id
+
+    client = SeafileClient(settings.intranet_seafile_url, settings.intranet_seafile_token)
+    return await client.download_file(intranet_repo_id, task.file_path)
+
+
+async def run_transfer_pipeline(task_id: int):
+    """
+    纯传输管线：下载内网文件 → 上传外网 → 更新状态 → 写审计 → 通知。
+    不含 DLP 闸门（DLP 闸门在 portal 的 _dlp_gate_and_transfer 中处理）。
+    """
+    with get_db() as db:
+        task = db.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+        if not task:
+            return
+        # 避免重复传输
+        if task.status == ReviewStatus.TRANSFERRED:
+            return
+
+        success, error_msg, extranet_path = await transfer_file_to_extranet(task)
+        if success:
+            task.status = ReviewStatus.TRANSFERRED
+            task.extranet_file_path = extranet_path
+            task.transferred_at = datetime.utcnow()
+            log_action("system", "task_transferred", "review_task", task_id,
+                       {"file_name": task.file_name, "extranet_path": extranet_path})
+        else:
+            task.status = ReviewStatus.FAILED
+            task.transfer_error = error_msg
+            log_action("system", "task_failed", "review_task", task_id,
+                       {"file_name": task.file_name, "error": error_msg})
+        db.commit()
+        db.refresh(task)
+
+    # 传输完成后再发通知（需要最新 task 状态）
+    await send_result_notification(task)

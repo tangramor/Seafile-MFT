@@ -15,8 +15,11 @@
   <a href="/review-board?status=rejected"    class="{% if current_status=='rejected' %}active{% endif %}">
     {{ _("已拒绝") }}
   </a>
-  <a href="/review-board?status="            class="{% if not current_status %}active{% endif %}">
+  <a href="/review-board?status="            class="{% if not current_status and not current_dlp %}active{% endif %}">
     {{ _("全部") }}
+  </a>
+  <a href="/review-board?dlp=alert"           class="{% if current_dlp == 'alert' %}active{% endif %}">
+    ⚠️ {{ _("DLP 待确认") }}
   </a>
 </div>
 
@@ -27,6 +30,10 @@
 <div class="alert alert-success">{{ _("✅ 任务") }} #{{ acted_id }} {{ _("已通过，文件正在同步至外网...") }}</div>
 {% elif msg == 'rejected' %}
 <div class="alert alert-warning">{{ _("❌ 任务") }} #{{ acted_id }} {{ _("已拒绝。") }}</div>
+{% elif msg == 'dlp_released' %}
+<div class="alert alert-success">{{ _("✅ 任务") }} #{{ acted_id }} {{ _("DLP 告警已确认为误报，文件已强制放行。") }}</div>
+{% elif msg == 'dlp_blocked' %}
+<div class="alert alert-warning">{{ _("🚫 任务") }} #{{ acted_id }} {{ _("DLP 告警已确认为泄露，文件已拦截。") }}</div>
 {% endif %}
 
 <div class="card" style="padding:0;">
@@ -73,6 +80,19 @@
           <td style="color:#999;font-size:12px;">{{ task.source or 'poller' }}</td>
           <td>
             <span class="badge badge-{{ color }}">{{ _(label) }}</span>
+            {% if task.dlp_state %}
+              {% if task.dlp_state == 'scanning' %}
+                <span class="badge badge-info" style="margin-left:4px;">🔍 {{ _("DLP 扫描中") }}</span>
+              {% elif task.dlp_state == 'alert' %}
+                <span class="badge badge-danger" style="margin-left:4px;">⚠️ {{ _("DLP 告警") }}</span>
+              {% elif task.dlp_state == 'cleared' %}
+                <span class="badge badge-success" style="margin-left:4px;">✅ {{ _("DLP 通过") }}</span>
+              {% elif task.dlp_state == 'released' %}
+                <span class="badge badge-success" style="margin-left:4px;">✅ {{ _("DLP 误报放行") }}</span>
+              {% elif task.dlp_state == 'blocked' %}
+                <span class="badge badge-danger" style="margin-left:4px;">🚫 {{ _("DLP 已拦截") }}</span>
+              {% endif %}
+            {% endif %}
             {% if task.reviewer_comment %}
             <span class="comment-tip-wrap">
               <span class="comment-tip-icon">💬</span>
@@ -92,7 +112,27 @@
             {% if task.reviewed_by %}{{ task.reviewed_by }}{% else %}—{% endif %}
           </td>
           <td>
-            {% if task.status.value == 'pending' %}
+            {% if task.dlp_state == 'scanning' %}
+            <span style="color:#1a73e8;font-size:12px;">🔍 {{ _("DLP 扫描中，请稍候…") }}</span>
+            {% elif task.dlp_state == 'alert' %}
+              <!-- DLP 命中，展示命中摘要 + 审核者处置 -->
+              <div style="font-size:11px;color:#d93025;max-width:280px;margin-bottom:6px;">
+                {% set sev = task.dlp_severity or 'unknown' %}
+                <strong>{{ _("严重度") }}:</strong> {{ sev }}<br>
+                {% for h in task.dlp_hits_json[:3] %}
+                  <span style="display:inline-block;background:#fce8e6;color:#c5221f;border-radius:4px;padding:1px 6px;margin:2px 2px 0 0;">{{ h.rule }}{% if h.tags %} · {{ h.tags|join(',') }}{% endif %}</span>
+                {% endfor %}
+                {% if task.dlp_hits_json|length > 3 %}<span style="color:#999;"> +{{ task.dlp_hits_json|length - 3 }}…</span>{% endif %}
+              </div>
+              <form method="post" action="/review-board/{{ task.id }}/dlp-release" style="display:inline;">
+                <input type="hidden" name="comment" value="">
+                <button type="submit" class="btn btn-success btn-sm">{{ _("确认误报 / 放行") }}</button>
+              </form>
+              <form method="post" action="/review-board/{{ task.id }}/dlp-block" style="display:inline;margin-left:4px;">
+                <input type="hidden" name="comment" value="">
+                <button type="submit" class="btn btn-danger btn-sm">{{ _("确认泄露 / 拦截") }}</button>
+              </form>
+            {% elif task.status.value == 'pending' %}
             <!-- 审核操作弹窗触发 -->
             <button class="btn btn-success btn-sm"
               onclick="showModal({{ task.id }}, '{{ task.file_name|e }}', 'approve')">{{ _("✅ 通过") }}</button>
@@ -115,11 +155,11 @@
   <div style="padding:16px 20px;">
     <div class="pagination">
       {% if page > 1 %}
-        <a href="/review-board?page={{ page-1 }}&status={{ current_status or '' }}">{{ _("‹ 上一页") }}</a>
+        <a href="/review-board?page={{ page-1 }}&status={{ current_status or '' }}&dlp={{ current_dlp or '' }}">{{ _("‹ 上一页") }}</a>
       {% endif %}
       <span class="current">{{ page }}</span>
       {% if page * page_size < total %}
-        <a href="/review-board?page={{ page+1 }}&status={{ current_status or '' }}">{{ _("下一页 ›") }}</a>
+        <a href="/review-board?page={{ page+1 }}&status={{ current_status or '' }}&dlp={{ current_dlp or '' }}">{{ _("下一页 ›") }}</a>
       {% endif %}
       <span style="font-size:12px;color:#999;">{{ _("共") }} {{ total }} {{ _("条") }}</span>
     </div>

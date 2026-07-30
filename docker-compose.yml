@@ -9,6 +9,7 @@ services:
     ports:
       - "8081:8080"
     volumes:
+      - /etc/localtime:/etc/localtime
       - ./seafile_mft.db:/app/seafile_mft.db
       # 不再挂载 .env 文件，改用 environment 传递关键配置
     environment:

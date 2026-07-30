@@ -1,0 +1,139 @@
+version: "3.9"
+
+# ============================================================
+#  出口扫描 Worker - Docker Compose 编排
+#  组件: MinIO(暂存) + Kafka(队列) + Worker(解包+分类+YARA) + Malcontent + Alertmanager
+# ============================================================
+
+services:
+
+  # ---------- 1. 对象存储暂存 ----------
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: scanadmin
+      MINIO_ROOT_PASSWORD: Scan@StrongPass2026
+    volumes:
+      - /etc/localtime:/etc/localtime
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ---------- 2. 消息队列 ----------
+  kafka:
+    image: bitnami/kafka:3.7
+    ports:
+      - "9092:9092"
+    volumes:
+      - /etc/localtime:/etc/localtime
+    environment:
+      KAFKA_CFG_NODE_ID: 0
+      KAFKA_CFG_PROCESS_ROLES: controller,broker
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CFG_CONTROLLER_PORT: 9093
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------- 3. 入口网关 (接收上传 -> 存MinIO -> 发Kafka) ----------
+  gateway:
+    build: ./gateway
+    ports:
+      - "8080:8080"
+    volumes:
+      - /etc/localtime:/etc/localtime
+    environment:
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: scanadmin
+      MINIO_SECRET_KEY: Scan@StrongPass2026
+      MINIO_BUCKET: outbound-files
+      KAFKA_BROKER: kafka:9092
+      KAFKA_TOPIC: file-scan-queue
+    depends_on:
+      minio:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  # ---------- 4. 扫描 Worker (核心) ----------
+  scanner-worker:
+    build: ./scanner
+    deploy:
+      replicas: 3          # 水平扩展
+    environment:
+      KAFKA_BROKER: kafka:9092
+      KAFKA_TOPIC: file-scan-queue
+      KAFKA_GROUP: scanner-group
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: scanadmin
+      MINIO_SECRET_KEY: Scan@StrongPass2026
+      MINIO_BUCKET: outbound-files
+      YARA_RULES_DIR: /rules
+      MAX_UNPACK_DEPTH: "5"
+      ALERT_WEBHOOK: http://alertmanager:9093/webhook
+      LOG_LEVEL: INFO
+    volumes:
+      - /etc/localtime:/etc/localtime
+      - ./rules:/rules:ro       # YARA 规则热加载
+      - scanner_cache:/cache
+    depends_on:
+      kafka:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  # ---------- 5. 沙箱 (处理加壳/混淆) ----------
+  sandbox:
+    build: ./sandbox
+    volumes:
+      - /etc/localtime:/etc/localtime
+    environment:
+      KAFKA_BROKER: kafka:9092
+      KAFKA_TOPIC: sandbox-dump-queue
+      SCANNER_TOPIC: file-scan-queue
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  # ---------- 6. 告警分发 ----------
+  alertmanager:
+    image: prom/alertmanager:latest
+    ports:
+      - "9093:9093"
+    volumes:
+      - /etc/localtime:/etc/localtime
+      - ./alertmanager.yml:/config/alertmanager.yml:ro
+    command:
+      - "--config.file=/config/alertmanager.yml"
+
+  # ---------- 7. 日志收集 ----------
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+    ports:
+      - "9200:9200"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - /etc/localtime:/etc/localtime
+      - es_data:/usr/share/elasticsearch/data
+
+volumes:
+  minio_data:
+  scanner_cache:
+  es_data:

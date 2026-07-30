@@ -438,5 +438,27 @@
   "目标仓库配对": "Target Repo Pair",
   "文件将上传到该配对的内网仓库，审批通过后自动同步至对应的外网仓库。": "The file will be uploaded to this pair's internal repo, and synced to the corresponding external repo after approval.",
   "您当前未被分配到任何仓库分组，无法上传文件。请联系管理员。": "You are not assigned to any repo group and cannot upload files. Please contact the administrator.",
-  "请选择有效的目标仓库配对": "Please select a valid target repo pair"
+  "请选择有效的目标仓库配对": "Please select a valid target repo pair",
+
+  "目标仓库配对": "Target Repo Pair",
+
+  "DLP 扫描中": "DLP Scanning",
+  "DLP 告警": "DLP Alert",
+  "DLP 通过": "DLP Passed",
+  "DLP 误报放行": "DLP False-Positive Released",
+  "DLP 已拦截": "DLP Blocked",
+  "DLP 待确认": "DLP Pending Review",
+  "DLP 扫描中，请稍候…": "DLP scanning, please wait…",
+  "严重度": "Severity",
+  "确认误报 / 放行": "Confirm False Positive / Release",
+  "确认泄露 / 拦截": "Confirm Leak / Block",
+  "DLP 命中告警": "DLP Hit Alert",
+  "DLP 误报放行": "DLP False-Positive Release",
+  "DLP 确认拦截": "DLP Confirmed Block",
+  "DLP 拦截": "DLP Blocked",
+  "DLP 提交失败": "DLP Submit Failed",
+  "DLP 扫描下载失败": "DLP Scan Download Failed",
+  "DLP 告警已确认为误报，文件已强制放行。": "DLP alert confirmed as false positive; file force-released.",
+  "DLP 告警已确认为泄露，文件已拦截。": "DLP alert confirmed as leak; file blocked.",
+  "该任务无待确认的 DLP 告警": "This task has no pending DLP alert to confirm"
 }

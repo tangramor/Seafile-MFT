@@ -285,7 +285,8 @@ async def _poll_single_repo(db: Session, poller: SeafilePoller, pair: RepoPair, 
         logger.info(f"[Poller][{pair.name}] 创建审核任务 #{task.id}: {file_path} (mtime={file_info.get('mtime')})")
 
         log_action("system", "task_created", "review_task", task.id,
-                   {"file_name": file_name, "uploader": creator, "source": "poller", "repo_pair_id": pair.id})
+                   {"file_name": file_name, "uploader": creator, "source": "poller", "repo_pair_id": pair.id},
+                   db=db)
 
         # 发送审批邮件（异步）
         asyncio.create_task(send_review_notification(task))

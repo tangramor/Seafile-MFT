@@ -59,6 +59,12 @@
             'group_renamed': ('✏️ ' + _("重命名分组"), 'warning'),
             'group_pairs_updated': ('🔗 ' + _("更新分组配对"), 'info'),
             'group_members_updated': ('👥 ' + _("更新分组成员"), 'info'),
+            'dlp_alert': ('⚠️ ' + _("DLP 命中告警"), 'danger'),
+            'dlp_release': ('✅ ' + _("DLP 误报放行"), 'success'),
+            'dlp_block': ('🚫 ' + _("DLP 确认拦截"), 'danger'),
+            'dlp_blocked': ('🚫 ' + _("DLP 拦截"), 'danger'),
+            'dlp_submit_failed': ('⚠️ ' + _("DLP 提交失败"), 'warning'),
+            'dlp_scan_failed': ('⚠️ ' + _("DLP 扫描下载失败"), 'warning'),
           } %}
           {% set al = action_labels.get(e.action, (e.action, 'info')) %}
           <span class="badge badge-{{ al[1] }}">{{ al[0] }}</span>

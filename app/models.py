@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from contextlib import contextmanager
 
-from sqlalchemy import Column, String, Integer, DateTime, Text, Enum, Boolean, create_engine, text
+from sqlalchemy import Column, String, Integer, DateTime, Text, Enum, Boolean, create_engine, text, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker, Session
 from sqlalchemy import inspect as sa_inspect
 
@@ -102,6 +102,16 @@ class ReviewTask(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     expire_at = Column(DateTime, nullable=True)   # token 过期时间
 
+    # ── DLP 出口扫描状态（scan-worker 集成）──
+    # dlp_state: ""(未扫描) / scanning / alert / cleared / blocked / released
+    dlp_state = Column(String(32), default="", index=True)
+    dlp_severity = Column(String(32), default="")   # 命中时的最高严重度
+    dlp_hits = Column(Text, default="")             # JSON 命中详情列表
+    dlp_reviewed_by = Column(String(256), default="")
+    dlp_reviewed_at = Column(DateTime, nullable=True)
+    dlp_comment = Column(Text, default="")
+    dlp_checked_at = Column(DateTime, nullable=True)  # 扫描完成时间
+
 
 class PollerState(Base):
     """
@@ -188,8 +198,23 @@ def init_engine(database_url: str):
     # 移除 aiosqlite 前缀，使用普通 sqlite
     if database_url.startswith("sqlite+aiosqlite"):
         database_url = database_url.replace("sqlite+aiosqlite", "sqlite")
-    _engine = create_engine(database_url, echo=False, connect_args={"check_same_thread": False})
+    _engine = create_engine(
+        database_url,
+        echo=False,
+        connect_args={"check_same_thread": False, "timeout": 30},
+    )
     _session_factory = sessionmaker(_engine, expire_on_commit=False)
+    # SQLite 并发写优化：后台轮询线程与 Web 请求可能同时写入，
+    # 启用 WAL（读写可并发）+ busy_timeout（写冲突时等待而非立即报 locked）。
+    @event.listens_for(_engine, "connect")
+    def _set_sqlite_pragma(dbapi_conn, conn_record):
+        cur = dbapi_conn.cursor()
+        try:
+            cur.execute("PRAGMA journal_mode=WAL")
+            cur.execute("PRAGMA busy_timeout=30000")
+            cur.execute("PRAGMA synchronous=NORMAL")
+        finally:
+            cur.close()
 
 
 def create_tables():
@@ -214,6 +239,22 @@ def migrate_db():
             with _engine.begin() as conn:
                 conn.execute(text("ALTER TABLE review_tasks ADD COLUMN repo_pair_id INTEGER"))
             logger.info("[Migrate] review_tasks 已补加 repo_pair_id 列")
+
+        # DLP 相关列（scan-worker 集成）
+        dlp_cols = {
+            "dlp_state": "VARCHAR(32)",
+            "dlp_severity": "VARCHAR(32)",
+            "dlp_hits": "TEXT",
+            "dlp_reviewed_by": "VARCHAR(256)",
+            "dlp_reviewed_at": "DATETIME",
+            "dlp_comment": "TEXT",
+            "dlp_checked_at": "DATETIME",
+        }
+        for col, ctype in dlp_cols.items():
+            if col not in cols:
+                with _engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE review_tasks ADD COLUMN {col} {ctype}"))
+                logger.info(f"[Migrate] review_tasks 已补加 {col} 列")
 
 
 def seed_default_repo_pair(db: Session, settings):
