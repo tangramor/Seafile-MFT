@@ -458,6 +458,7 @@ sequenceDiagram
     participant Intranet as Internal Seafile
     participant MFT
     participant Reviewer
+    participant DLP as scan-worker (DLP)
     participant Extranet as External Seafile
 
     Submitter->>Intranet: Upload file
@@ -465,8 +466,24 @@ sequenceDiagram
     MFT->>Reviewer: Send email with approval link
     Reviewer->>MFT: Open review board, approve
     MFT->>Intranet: Download file
-    MFT->>Extranet: Upload file
-    MFT->>Submitter: Notify sync complete
+    alt DLP disabled (DLP_ENABLED=false)
+        MFT->>Extranet: Upload file
+    else DLP enabled
+        MFT->>DLP: Submit file for outbound scan (YARA + malcontent)
+        DLP-->>MFT: Result {verdict, severity, hits}
+        alt clean / below DLP_ALERT_SEVERITIES
+            MFT->>Extranet: Upload file
+        else alert (high-risk hit)
+            MFT->>Reviewer: Suspend task, notify for confirmation
+            Reviewer->>MFT: Release false-positive / Block confirmed leak
+            alt released
+                MFT->>Extranet: Upload file
+            else blocked
+                MFT->>Submitter: Notify submission blocked
+            end
+        end
+    end
+    MFT->>Submitter: Notify sync complete (if transferred)
     Submitter->>MFT: Download synced file
 ```
 

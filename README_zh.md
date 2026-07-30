@@ -456,6 +456,7 @@ sequenceDiagram
     participant 内网 as 内网 Seafile
     participant MFT
     participant 审批人
+    participant DLP as scan-worker（DLP）
     participant 外网 as 外网 Seafile
 
     上传者->>内网: 上传文件
@@ -463,8 +464,24 @@ sequenceDiagram
     MFT->>审批人: 发送审批邮件
     审批人->>MFT: 进入审核看板，审批通过
     MFT->>内网: 下载文件
-    MFT->>外网: 上传文件
-    MFT->>上传者: 通知同步完成
+    alt 未开启 DLP（DLP_ENABLED=false）
+        MFT->>外网: 上传文件
+    else 已开启 DLP
+        MFT->>DLP: 提交文件做出口扫描（YARA + malcontent）
+        DLP-->>MFT: 返回结果 {verdict, severity, hits}
+        alt clean / 低于 DLP_ALERT_SEVERITIES
+            MFT->>外网: 上传文件
+        else alert（高风险命中）
+            MFT->>审批人: 挂起任务，通知人工确认
+            审批人->>MFT: 放行误报 / 拦截确认泄露
+            alt 放行
+                MFT->>外网: 上传文件
+            else 拦截
+                MFT->>上传者: 通知提交被拦截
+            end
+        end
+    end
+    MFT->>上传者: 通知同步完成（若已传输）
     上传者->>MFT: 下载已同步的文件
 ```
 
