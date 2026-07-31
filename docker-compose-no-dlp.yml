@@ -69,7 +69,9 @@ services:
       - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
       - DLP_ENABLED=false
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      # 注意：基础镜像 python:3.11-slim 不含 curl，原 curl 健康检查会因
+      # "executable file not found" 永远 unhealthy。改用镜像自带的 python 发起探测。
+      test: ["CMD", "python", "-c", "import urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=5); sys.exit(0 if r.status==200 else 1)"]
       interval: 30s
       timeout: 10s
       retries: 3
